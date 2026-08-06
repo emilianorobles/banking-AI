@@ -172,11 +172,20 @@ def search(
     except Exception:
         return []
 
+    # Embed via the cached path, then search by vector. Going through FAISS's own
+    # similarity_search() would embed internally with a live call, which breaks the
+    # offline fallback -- see the note on llm.embed_query().
+    try:
+        vector = llm.embed_query(query)
+    except Exception:
+        return []
+
     try:
         if outcome:
-            hits = store.similarity_search_with_score(query, k=k, filter={"outcome": outcome})
+            hits = store.similarity_search_with_score_by_vector(
+                vector, k=k, filter={"outcome": outcome})
         else:
-            hits = store.similarity_search_with_score(query, k=k)
+            hits = store.similarity_search_with_score_by_vector(vector, k=k)
     except Exception:
         return []
 

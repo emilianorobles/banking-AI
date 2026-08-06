@@ -151,21 +151,44 @@ blocked on an API key.** The whole app runs today with `DEMO_MODE=off` (rules on
 - [x] `ui/customer.py`, `ui/admin.py`, `ui/demo_control.py`, `app.py` + auth/RBAC
 - [x] `api/main.py` — FastAPI ingestion
 - [x] `core/evaluation.py` — eval harness **+ rules-only vs agentic A/B comparison**
-- [ ] **← YOU ARE HERE: set the API key, then `python -m core.seed --index-only`**
-- [ ] Verify LLM path: citations, groundedness, the A/B improvement
-- [ ] Record `DEMO_MODE=cached` responses, test with Wi-Fi off
-- [ ] `docs/DEMO_SCRIPT.md`, slide deck
+- [x] API key configured; LLM **and** embeddings verified live
+- [x] FAISS index built (90 cases); citations resolve and are validated
+- [x] Balanced retrieval + asymmetric blend (see "Two defects the harness caught")
+- [x] Eval set hardened: 8 cases mirroring real production false positives
+- [x] `core/record_demo.py` — offline cache recorder + verifier
+- [x] `docs/DEMO_SCRIPT.md`, `docs/ARCHITECTURE.md`
+- [ ] **← NEXT: run `python -m core.record_demo`, then re-run it with Wi-Fi OFF**
+- [ ] Slide deck (architecture doc is structured to feed it)
 - [ ] Demo rehearsed 3× under 10:00, screen recording captured
 
-### Measured so far (rules only, no LLM yet)
+### Two defects the evaluation harness caught (both fixed)
+
+Worth knowing, because both are invisible in a demo and both would have been asked about.
+
+**1. Retrieval was biased toward fraud.** Plain top-k similarity returned three
+confirmed-fraud precedents for almost any flagged transaction — the corpus holds more
+fraud cases than false positives, as any real bank's would. The agent reasoned faithfully
+from one-sided evidence and concluded "fraud" every time. `rag.search_balanced()` now
+queries both outcomes separately and merges.
+
+**2. The model piled on instead of exonerating.** Measured: a symmetric blend left recall
+at 100% but pushed the average risk score on legitimate customers from 19.1 to 24.9 and
+blocked one the rules had allowed. `pipeline._blend()` is now asymmetric — the model's
+incriminating opinion carries 0.25, its exculpatory opinion 0.65. Rules are already
+excellent at finding risk and structurally incapable of exoneration, since they only ever
+add points.
+
+### Measured
 
 | | |
 |---|---|
 | Transactions needing no model | **96.7%** (1,934 / 2,000) — the cost argument |
-| Rule separation | fraud mean score **89.0** vs legitimate **2.0** |
-| Eval recall | **100%** (10/10 fraud caught) |
-| Eval false-positive rate | **25%** ← rules alone over-flag recurring large payments |
+| Rule separation | fraud mean **89.0** vs legitimate **2.0** |
+| Recall | **100%** |
+| Groundedness | **100%** — no fabricated citations |
+| Hard eval cases that defeat rules alone | **7 of 8** |
 
-That 25% FPR is not a bug to hide — it is the baseline the AI layer has to beat, and
-`python -m core.evaluation --compare` is what proves it does. Run that once the key is
-set; the delta is the strongest slide in the deck.
+**Be honest about the A/B in the pitch.** The rules are strong enough that the model adds
+little raw detection accuracy. Its real value is the explanation an analyst needs to act,
+the cited precedent that makes it auditable, and the learning loop. Saying that — and
+showing you measured it — beats claiming an improvement you cannot evidence.

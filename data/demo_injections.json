@@ -41,6 +41,25 @@
       }
     },
     {
+      "key": "legit_annual_premium",
+      "label": "Legitimate \u2014 annual insurance premium, 3.8x her usual maximum",
+      "expect": "Rules escalate on amount. The agent sees a merchant she has paid annually for four years and clears it. This is the beat where AI overrules the rules IN THE CUSTOMER'S FAVOUR.",
+      "txn": {
+        "customer_id": "CUST-0001",
+        "amount": 3078.53,
+        "currency": "INR",
+        "merchant": "SafeGuard Insurance",
+        "merchant_category": "utilities",
+        "country": "IN",
+        "city": "Pune",
+        "region": "INDIA",
+        "channel": "online",
+        "card_last4": "2523",
+        "device_id": "dev-demo",
+        "ip_address": "10.0.0.9"
+      }
+    },
+    {
       "key": "fraud_classic",
       "label": "FRAUD \u2014 high-value crypto top-up from Lagos at 03:00",
       "expect": "FREEZE_AND_ESCALATE with cited precedents.",
@@ -57,7 +76,7 @@
         "card_last4": "2523",
         "device_id": "dev-demo",
         "ip_address": "185.22.14.9",
-        "timestamp": "2026-08-06T03:57:50.678825+00:00"
+        "timestamp": "2026-08-06T03:53:41.484900+00:00"
       }
     },
     {
@@ -77,7 +96,7 @@
         "card_last4": "2523",
         "device_id": "dev-demo",
         "ip_address": "185.99.3.41",
-        "timestamp": "2026-08-06T03:58:50.678825+00:00"
+        "timestamp": "2026-08-06T03:54:41.484900+00:00"
       }
     },
     {

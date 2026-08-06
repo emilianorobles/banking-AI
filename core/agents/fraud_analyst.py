@@ -232,6 +232,27 @@ Produce your verdict as a single JSON object."""
 # The agent
 # --------------------------------------------------------------------------- #
 
+def scenario_cache_key(masked_txn: dict[str, Any], rules_text: str) -> str:
+    """A stable key describing WHAT this transaction is, not WHICH one it is.
+
+    Deliberately excludes txn_id, timestamp, device_id and ip_address -- they change on
+    every injection and would make the offline cache useless. Two injections of the same
+    demo scenario produce the same key, which is precisely what DEMO_MODE=cached needs.
+    """
+    import hashlib
+    parts = [
+        str(masked_txn.get("customer_id", "")),
+        f"{float(masked_txn.get('amount', 0)):.2f}",
+        str(masked_txn.get("merchant_category", "")),
+        str(masked_txn.get("country", "")),
+        str(masked_txn.get("channel", "")),
+        str(masked_txn.get("merchant", ""))[:60],
+        # Which rules fired is the substance of the prompt; their wording is not.
+        ",".join(sorted(re.findall(r"\[([A-Z_]+)\]", rules_text))),
+    ]
+    return "scn-" + hashlib.sha256("|".join(parts).encode()).hexdigest()[:24]
+
+
 def analyse(
     masked_txn: dict[str, Any],
     rules_text: str,
@@ -246,6 +267,7 @@ def analyse(
     to the deterministic rule score, which is the safe, conservative behaviour.
     """
     user_prompt = build_user_prompt(masked_txn, rules_text, precedents_text, customer_context)
+    base_key = scenario_cache_key(masked_txn, rules_text)
 
     total_latency = 0
     total_pt = total_ct = 0
@@ -258,7 +280,8 @@ def analyse(
     prompt = user_prompt
     for attempt in range(2):
         try:
-            text, tel = llm.chat(SYSTEM_PROMPT, prompt, agent="fraud_analyst")
+            text, tel = llm.chat(SYSTEM_PROMPT, prompt, agent="fraud_analyst",
+                                 cache_key=base_key)
             total_latency += tel.latency_ms
             total_pt += tel.prompt_tokens
             total_ct += tel.completion_tokens
@@ -303,7 +326,9 @@ def analyse(
                 f"{user_prompt}\n\n## Your initial verdict\n"
                 f"{json.dumps(_verdict_to_dict(verdict), indent=2)}\n\n{REFLECTION_PROMPT}"
             )
-            text, tel = llm.chat(SYSTEM_PROMPT, reflect_prompt, agent="fraud_analyst_reflection")
+            text, tel = llm.chat(SYSTEM_PROMPT, reflect_prompt,
+                                 agent="fraud_analyst_reflection",
+                                 cache_key=f"{base_key}-reflect")
             total_latency += tel.latency_ms
             total_pt += tel.prompt_tokens
             total_ct += tel.completion_tokens

@@ -46,7 +46,23 @@ def seed(reset: bool = False, build_index: bool = True) -> dict:
     db.insert_transactions(txns)
     print(f"  transactions     {len(txns):>5}")
 
-    summary = {"customers": len(customers), "transactions": len(txns), "cases": 0}
+    # Travel notices required by the hard eval cases. Without these the
+    # medical-abroad case is testing geography rules rather than the thing we meant
+    # to test, and the evaluation quietly measures the wrong thing.
+    notices = 0
+    if config.HARD_NOTICES_PATH.exists():
+        from . import travel
+        for n in json.loads(config.HARD_NOTICES_PATH.read_text(encoding="utf-8")):
+            try:
+                travel.create_notice(n["customer_id"], n["countries"],
+                                     n["start_date"], n["end_date"], created_via="form")
+                notices += 1
+            except Exception:
+                pass
+        print(f"  travel notices   {notices:>5}  (required by hard eval cases)")
+
+    summary = {"customers": len(customers), "transactions": len(txns),
+               "cases": 0, "travel_notices": notices}
 
     if build_index:
         try:

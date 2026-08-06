@@ -107,6 +107,69 @@ def cache_size() -> int:
 
 
 # --------------------------------------------------------------------------- #
+# Embedding cache
+#
+# DEMO_MODE=cached only intercepts chat calls. Retrieval still embeds the query, so
+# without this the "offline" fallback dies at the first RAG lookup -- and the citations,
+# which are the most compelling part of the demo, silently disappear. We verified this
+# by pointing the base URL at a dead port; retrieval returned zero cases.
+#
+# Query embeddings are cached to disk alongside the chat responses, so a recorded demo
+# genuinely runs with no network at all.
+# --------------------------------------------------------------------------- #
+
+@lru_cache(maxsize=1)
+def _load_embed_cache() -> dict[str, list[float]]:
+    if config.EMBED_CACHE_PATH.exists():
+        try:
+            return json.loads(config.EMBED_CACHE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_embedding(key: str, vector: list[float]) -> None:
+    cache = _load_embed_cache()
+    cache[key] = vector
+    try:
+        config.EMBED_CACHE_PATH.write_text(json.dumps(cache), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def embed_cache_size() -> int:
+    return len(_load_embed_cache())
+
+
+def embed_query(text: str) -> list[float]:
+    """Embed a retrieval query, using the disk cache when the provider is unreachable.
+
+    Raises LLMUnavailable only when the call fails AND nothing is cached -- callers
+    degrade to rules-only rather than crashing.
+    """
+    key = hashlib.sha256(text.encode()).hexdigest()[:24]
+    cached = _load_embed_cache().get(key)
+
+    if config.DEMO_MODE in ("cached", "off"):
+        if cached is not None:
+            return cached
+        if config.DEMO_MODE == "off":
+            raise LLMUnavailable("DEMO_MODE=off: embeddings disabled")
+        # cached mode with a miss: fall through and try live, then fail cleanly
+
+    try:
+        vector = get_embeddings().embed_query(text)
+        if config.RECORD_RESPONSES:
+            _save_embedding(key, list(vector))
+            _load_embed_cache.cache_clear()
+        return list(vector)
+    except Exception as exc:
+        if cached is not None:
+            return cached
+        raise LLMUnavailable(f"embedding failed and not cached: {exc}") from exc
+
+
+# --------------------------------------------------------------------------- #
 # The one call everything uses
 # --------------------------------------------------------------------------- #
 
@@ -150,6 +213,7 @@ def chat(
     *,
     agent: str = "unknown",
     temperature: float | None = None,
+    cache_key: str | None = None,
 ) -> tuple[str, LLMTelemetry]:
     """Send one system+user exchange and return (text, telemetry).
 
@@ -160,8 +224,14 @@ def chat(
 
     On a live call that fails, falls back to the cache before giving up. That
     fallback is what makes an API outage mid-demo survivable.
+
+    `cache_key` supplies a STABLE semantic key instead of hashing the prompt. This
+    matters more than it looks: every injected transaction carries a fresh txn_id and
+    timestamp, so a prompt hash changes on every single call and the cache would never
+    hit -- the offline fallback would be silently useless exactly when it is needed.
+    Callers pass a key describing the *scenario* rather than the instance.
     """
-    key = _cache_key(system, user)
+    key = cache_key or _cache_key(system, user)
     started = time.perf_counter()
 
     if config.DEMO_MODE == "off":

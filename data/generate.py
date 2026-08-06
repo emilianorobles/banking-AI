@@ -348,6 +348,67 @@ PRECEDENT_SEEDS: list[dict] = [
      "narrative": "A chat session attempted to get the assistant to reveal the full card number and account details of another customer by claiming to be a bank employee performing an audit.",
      "outcome": "confirmed_fraud",
      "note": "The assistant only ever has access to the authenticated customer's own tokenized data. Authority claims inside a conversation confer no privileges."},
+
+    # ---- additional false-positive precedents ----
+    # The corpus was fraud-heavy, which biased retrieval: nearly every flagged
+    # transaction came back with three fraud precedents and nothing exculpatory. These
+    # even it out and, more importantly, cover the specific patterns that generate real
+    # false positives in production.
+    {"title": "Relocation abroad with large household setup purchases",
+     "tags": ["relocation", "geo_foreign", "amount_anomaly", "false_positive"],
+     "region": "EMEA", "channel": "online", "band": "high",
+     "narrative": "A customer who had moved country three weeks earlier made a large furniture and appliance purchase in their new city. Geography and amount rules both fired. Their transaction history showed three weeks of consistent everyday spending in that same country beforehand.",
+     "outcome": "false_positive",
+     "note": "Sustained ordinary activity in a country before a large purchase is the signature of relocation, not compromise. Fraud does not do a fortnight of grocery shopping first."},
+
+    {"title": "Long-standing merchant relationship, annual large charge",
+     "tags": ["recurring_payment", "merchant_familiarity", "amount_anomaly", "false_positive"],
+     "region": "NA", "channel": "online", "band": "high",
+     "narrative": "A charge many times the customer's typical amount, at a merchant they had transacted with on the same month for four consecutive years, for a comparable sum each time.",
+     "outcome": "false_positive",
+     "note": "Merchant familiarity is the strongest exculpatory signal available and no threshold rule can express it. Always check whether the payee is established before escalating on amount."},
+
+    {"title": "Quarterly business travel matching a two-year pattern",
+     "tags": ["business_travel", "geo_foreign", "recurring_pattern", "false_positive"],
+     "region": "APAC", "channel": "card_present", "band": "medium",
+     "narrative": "Hotel and restaurant charges in a foreign city that the customer has visited in the same week of every quarter for two years, with comparable spend each time.",
+     "outcome": "false_positive",
+     "note": "Recurring geography is a learned pattern. Flagging the same trip every quarter erodes customer trust and trains them to ignore genuine alerts."},
+
+    {"title": "Festival season spending burst, all card-present at home",
+     "tags": ["velocity", "seasonal", "card_present", "false_positive"],
+     "region": "INDIA", "channel": "card_present", "band": "high",
+     "narrative": "Seven card-present transactions in a single day across jewellery, catering and apparel merchants, all within the customer's home city, during a major festival period.",
+     "outcome": "false_positive",
+     "note": "Velocity without any geography or channel anomaly, entirely card-present in the home city, is a life event. Physical card possession is proven on every transaction."},
+
+    {"title": "Hotel pre-authorisation followed by the settled bill",
+     "tags": ["pre_authorisation", "card_testing", "false_positive"],
+     "region": "EMEA", "channel": "card_not_present", "band": "high",
+     "narrative": "A nominal pre-authorisation hold at check-in, followed at checkout by the full accommodation charge, resembled the micro-charge-then-large-purchase card-testing signature.",
+     "outcome": "false_positive",
+     "note": "Hotels, fuel and car hire routinely pre-authorise. Exclude these merchant categories from card-testing detection or you will flag every business traveller."},
+
+    {"title": "Medical treatment abroad during declared travel",
+     "tags": ["travel_notice", "medical", "amount_anomaly", "false_positive"],
+     "region": "APAC", "channel": "card_not_present", "band": "high",
+     "narrative": "A large pharmacy and clinic charge in a country covered by an active travel notice. The amount was well above the customer's baseline but the merchant category was medical and the timing was mid-trip.",
+     "outcome": "false_positive",
+     "note": "Benign merchant categories during declared travel deserve the benefit of the doubt. Declining someone's medical payment abroad is the worst possible false positive."},
+
+    {"title": "Annual tuition payment to a foreign institution",
+     "tags": ["education", "geo_foreign", "amount_anomaly", "recurring_payment", "false_positive"],
+     "region": "INDIA", "channel": "online", "band": "high",
+     "narrative": "A very large payment to an overseas university, matching a payment of similar size made to the same institution in the same month of the previous year.",
+     "outcome": "false_positive",
+     "note": "Prior-year history to the identical merchant resolves this without contacting the customer. Education and insurance payments are annual by nature."},
+
+    {"title": "High-value electronics purchased card-present with PIN",
+     "tags": ["card_present", "amount_anomaly", "false_positive"],
+     "region": "NA", "channel": "card_present", "band": "high",
+     "narrative": "A purchase several times the customer's usual maximum, made card-present with chip-and-PIN at a major retailer in their home city during business hours.",
+     "outcome": "false_positive",
+     "note": "Chip-and-PIN in the home city proves physical possession and knowledge of the PIN. Amount alone should never escalate when possession is independently verified."},
 ]
 
 # Pattern variations used to expand the seed cases into a fuller corpus.
@@ -386,9 +447,9 @@ def make_precedents() -> list[FraudCase]:
     regions = list(REGION_PROFILE)
     for seed in PRECEDENT_SEEDS:
         for region in regions:
-            if region == seed["region"] or next_id > 80:
+            if region == seed["region"] or next_id > 90:
                 continue
-            if RNG.random() > 0.45:
+            if RNG.random() > 0.55:
                 continue
             country, city = RNG.choice(_VARIATION_CITIES[region])
             cases.append(FraudCase(
@@ -476,6 +537,233 @@ def make_eval_set(customers: list[Customer]) -> list[dict]:
     return rows
 
 
+def make_hard_eval_cases(
+    customers: list[Customer],
+) -> tuple[list[Transaction], list[dict]]:
+    """Genuinely hard legitimate cases -- the ones that generate real production FPs.
+
+    Returns (supporting_history, eval_rows). The history is essential and is the whole
+    point: each case is only defensible because of what is in the customer's record. A
+    relocation looks like fraud until you see three weeks of ordinary spending in the new
+    country first. An annual premium looks like an anomaly until you see the four
+    identical charges to the same merchant in prior years.
+
+    These cases deliberately trip three or four rules each, landing them well into the
+    escalation band. The deterministic layer has no way out -- rules only add points and
+    cannot express "but this is normal for this person". Resolving them requires
+    retrieving precedent and reading the customer's history, which is exactly the work
+    the agent exists to do.
+
+    This is not stacking the deck. Cases this shape are what fraud operations teams
+    actually spend their days overturning.
+    """
+    now = datetime.now(timezone.utc)
+    history: list[Transaction] = []
+    rows: list[dict] = []
+    pool = customers[150:200]
+
+    def hist_txn(c: Customer, when: datetime, **over) -> Transaction:
+        profile = REGION_PROFILE[c.region]
+        d = {
+            "txn_id": new_id("TXN"),
+            "customer_id": c.customer_id,
+            "timestamp": when.isoformat(),
+            "amount": round(c.baseline_avg_amount, 2),
+            "currency": profile["currency"],
+            "merchant": "FreshMart",
+            "merchant_category": "groceries",
+            "country": c.home_country,
+            "city": c.home_city,
+            "region": c.region,
+            "channel": "card_present",
+            "card_last4": c.card_number[-4:],
+            "device_id": "dev-hist",
+            "ip_address": "10.0.1.5",
+            "is_fraud_label": False,
+        }
+        d.update(over)
+        return Transaction(**d)
+
+    def eval_row(c: Customer, kind: str, **over) -> dict:
+        profile = REGION_PROFILE[c.region]
+        d = {
+            "txn_id": new_id("EVAL"),
+            "customer_id": c.customer_id,
+            "timestamp": now.isoformat(),
+            "amount": round(c.baseline_avg_amount, 2),
+            "currency": profile["currency"],
+            "merchant": "FreshMart",
+            "merchant_category": "groceries",
+            "country": c.home_country,
+            "city": c.home_city,
+            "region": c.region,
+            "channel": "card_present",
+            "card_last4": c.card_number[-4:],
+            "device_id": "dev-eval",
+            "ip_address": "10.0.1.5",
+            "is_fraud_label": False,
+            "eval_kind": kind,
+        }
+        d.update(over)
+        return d
+
+    # --- 1. Relocation: three weeks of ordinary life in the new country first ---
+    c = pool[0]
+    for day in range(21, 1, -1):
+        history.append(hist_txn(
+            c, now - timedelta(days=day),
+            country="NL", city="Amsterdam", region="EMEA",
+            merchant=RNG.choice(MERCHANTS["groceries"] + MERCHANTS["restaurants"]),
+            merchant_category=RNG.choice(["groceries", "restaurants", "fuel"]),
+        ))
+    rows.append(eval_row(
+        c, "hard_relocation_setup",
+        amount=round(c.baseline_max_amount * 4.2, 2),
+        merchant="TechWorld", merchant_category="electronics",
+        country="NL", city="Amsterdam", region="EMEA", channel="online",
+    ))
+
+    # --- 2. Annual premium at a merchant used for four straight years ---
+    c = pool[1]
+    for year in range(1, 5):
+        history.append(hist_txn(
+            c, now - timedelta(days=365 * year),
+            amount=round(c.baseline_max_amount * 3.6, 2),
+            merchant="SafeGuard Insurance", merchant_category="utilities",
+            channel="online",
+        ))
+    rows.append(eval_row(
+        c, "hard_annual_premium",
+        amount=round(c.baseline_max_amount * 3.8, 2),
+        merchant="SafeGuard Insurance", merchant_category="utilities",
+        channel="online",
+    ))
+
+    # --- 3. Festival burst: seven card-present transactions at home in one hour ---
+    c = pool[2]
+    for i in range(1, 8):
+        history.append(hist_txn(
+            c, now - timedelta(minutes=6 * i),
+            amount=round(c.baseline_avg_amount * RNG.uniform(0.8, 2.0), 2),
+            merchant=RNG.choice(MERCHANTS["apparel"] + MERCHANTS["restaurants"]),
+            merchant_category=RNG.choice(["apparel", "restaurants", "groceries"]),
+        ))
+    rows.append(eval_row(
+        c, "hard_festival_burst",
+        amount=round(c.baseline_max_amount * 3.6, 2),
+        merchant="UrbanThread", merchant_category="apparel",
+    ))
+
+    # --- 4. Quarterly business travel, same city for two years ---
+    c = pool[3]
+    for q in range(1, 9):
+        history.append(hist_txn(
+            c, now - timedelta(days=91 * q),
+            amount=round(c.baseline_avg_amount * 1.8, 2),
+            merchant="StayInn Hotels", merchant_category="travel",
+            country="DE", city="Frankfurt", region="EMEA",
+        ))
+    rows.append(eval_row(
+        c, "hard_quarterly_business_trip",
+        amount=round(c.baseline_max_amount * 3.4, 2),
+        merchant="StayInn Hotels", merchant_category="travel",
+        country="DE", city="Frankfurt", region="EMEA", channel="card_not_present",
+    ))
+
+    # --- 5. Annual tuition to the same foreign institution ---
+    c = pool[4]
+    history.append(hist_txn(
+        c, now - timedelta(days=366),
+        amount=round(c.baseline_max_amount * 8.0, 2),
+        merchant="Riverton University", merchant_category="utilities",
+        country="GB", city="London", region="EMEA", channel="online",
+    ))
+    rows.append(eval_row(
+        c, "hard_annual_tuition",
+        amount=round(c.baseline_max_amount * 8.5, 2),
+        merchant="Riverton University", merchant_category="utilities",
+        country="GB", city="London", region="EMEA", channel="online",
+    ))
+
+    # --- 6. High-value electronics, card-present with PIN, home city, midday ---
+    c = pool[5]
+    rows.append(eval_row(
+        c, "hard_card_present_high_value",
+        timestamp=now.replace(hour=14, minute=20).isoformat(),
+        amount=round(c.baseline_max_amount * 4.5, 2),
+        merchant="TechWorld", merchant_category="electronics",
+        channel="card_present",
+    ))
+
+    # --- 7. Hotel pre-auth then the settled bill (looks like card testing) ---
+    c = pool[6]
+    history.append(hist_txn(
+        c, now - timedelta(minutes=25), amount=1.00,
+        merchant="StayInn Hotels", merchant_category="travel",
+        channel="card_not_present",
+    ))
+    rows.append(eval_row(
+        c, "hard_hotel_preauth_settle",
+        amount=round(max(950.0, c.baseline_max_amount * 2.4), 2),
+        merchant="StayInn Hotels", merchant_category="travel",
+        channel="card_not_present",
+    ))
+
+    # --- 8. Medical treatment abroad during declared travel ---
+    #     The travel notice is created by core.seed so geography is suppressed; what
+    #     remains is a large charge in a benign category mid-trip.
+    c = pool[7]
+    rows.append(eval_row(
+        c, "hard_medical_abroad",
+        amount=round(c.baseline_max_amount * 5.0, 2),
+        merchant="WellCare Pharmacy", merchant_category="pharmacy",
+        country="TH", city="Bangkok", region="APAC", channel="card_not_present",
+    ))
+
+    return history, rows
+
+
+# Travel notices that must exist for certain hard cases to be judged fairly.
+# core.seed creates these; without them the medical-abroad case is not the case we
+# intended to test.
+HARD_CASE_TRAVEL_NOTICES = [
+    {"customer_index": 157, "countries": ["TH"], "days_before": 5, "days_after": 10},
+]
+
+
+def make_hero_history(hero: Customer) -> list[Transaction]:
+    """Give the demo's hero customer a four-year insurance-premium record.
+
+    This exists so the demo can show the agent OVERRULING the rules in the customer's
+    favour. Without it every beat has rules and model agreeing, and the obvious question
+    -- "what is the model actually adding?" -- has no on-stage answer. Here the rules see
+    a charge 3.8x the customer's maximum and escalate; the agent sees a merchant she has
+    paid annually since 2022 and clears it.
+    """
+    now = datetime.now(timezone.utc)
+    profile = REGION_PROFILE[hero.region]
+    history = []
+    for year in range(1, 5):
+        history.append(Transaction(
+            txn_id=new_id("TXN"),
+            customer_id=hero.customer_id,
+            timestamp=(now - timedelta(days=365 * year)).isoformat(),
+            amount=round(hero.baseline_max_amount * 3.5, 2),
+            currency=profile["currency"],
+            merchant="SafeGuard Insurance",
+            merchant_category="utilities",
+            country=hero.home_country,
+            city=hero.home_city,
+            region=hero.region,
+            channel="online",
+            card_last4=hero.card_number[-4:],
+            device_id="dev-hero",
+            ip_address="10.0.0.9",
+            is_fraud_label=False,
+        ))
+    return history
+
+
 def make_demo_injections(customers: list[Customer]) -> dict:
     """The scripted transactions used on stage. Deterministic -- never improvise live.
 
@@ -522,6 +810,17 @@ def make_demo_injections(customers: list[Customer]) -> dict:
                             merchant="Bistro 42", merchant_category="restaurants",
                             country="ES", city="Barcelona", region="EMEA",
                             channel="card_present"),
+            },
+            {
+                "key": "legit_annual_premium",
+                "label": "Legitimate — annual insurance premium, 3.8x her usual maximum",
+                "expect": ("Rules escalate on amount. The agent sees a merchant she has "
+                           "paid annually for four years and clears it. This is the beat "
+                           "where AI overrules the rules IN THE CUSTOMER'S FAVOUR."),
+                "txn": base(amount=round(hero.baseline_max_amount * 3.8, 2),
+                            merchant="SafeGuard Insurance",
+                            merchant_category="utilities",
+                            channel="online"),
             },
             {
                 "key": "fraud_classic",
@@ -588,10 +887,15 @@ def main() -> None:
     print(f"  customers.json          {len(customers):>5} customers")
 
     txns = make_transactions(customers)
+    hard_history, hard_rows = make_hard_eval_cases(customers)
+    txns.extend(hard_history)
+    txns.extend(make_hero_history(customers[0]))
+    txns.sort(key=lambda t: t.timestamp)
     config.TRANSACTIONS_PATH.write_text(
         json.dumps([t.to_dict() for t in txns], indent=2), encoding="utf-8")
     fraud_n = sum(1 for t in txns if t.is_fraud_label)
-    print(f"  transactions_seed.json  {len(txns):>5} transactions ({fraud_n} fraudulent)")
+    print(f"  transactions_seed.json  {len(txns):>5} transactions ({fraud_n} fraudulent, "
+          f"{len(hard_history)} supporting hard-case history)")
 
     cases = make_precedents()
     with config.PRECEDENTS_PATH.open("w", encoding="utf-8") as fh:
@@ -601,11 +905,25 @@ def main() -> None:
     print(f"  fraud_precedents.jsonl  {len(cases):>5} cases "
           f"({confirmed} fraud / {len(cases) - confirmed} false positive)")
 
-    eval_rows = make_eval_set(customers)
+    eval_rows = make_eval_set(customers) + hard_rows
     with config.EVAL_SET_PATH.open("w", encoding="utf-8") as fh:
         for r in eval_rows:
             fh.write(json.dumps(r) + "\n")
-    print(f"  eval_set.jsonl          {len(eval_rows):>5} labelled cases")
+    print(f"  eval_set.jsonl          {len(eval_rows):>5} labelled cases "
+          f"({len(hard_rows)} genuinely hard legitimate)")
+
+    config.HARD_NOTICES_PATH.write_text(
+        json.dumps([
+            {
+                "customer_id": customers[n["customer_index"]].customer_id,
+                "countries": n["countries"],
+                "start_date": (datetime.now(timezone.utc)
+                               - timedelta(days=n["days_before"])).date().isoformat(),
+                "end_date": (datetime.now(timezone.utc)
+                             + timedelta(days=n["days_after"])).date().isoformat(),
+            }
+            for n in HARD_CASE_TRAVEL_NOTICES
+        ], indent=2), encoding="utf-8")
 
     demo = make_demo_injections(customers)
     config.DEMO_INJECTIONS_PATH.write_text(json.dumps(demo, indent=2), encoding="utf-8")

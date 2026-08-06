@@ -34,7 +34,9 @@ EVAL_SET_PATH = DATA_DIR / "eval_set.jsonl"
 CUSTOMERS_PATH = DATA_DIR / "customers.json"
 TRANSACTIONS_PATH = DATA_DIR / "transactions_seed.json"
 DEMO_INJECTIONS_PATH = DATA_DIR / "demo_injections.json"
+HARD_NOTICES_PATH = DATA_DIR / "hard_case_travel_notices.json"
 CACHED_RESPONSES_PATH = DATA_DIR / "cached_responses.json"
+EMBED_CACHE_PATH = DATA_DIR / "cached_embeddings.json"
 
 DATA_DIR.mkdir(exist_ok=True)
 
