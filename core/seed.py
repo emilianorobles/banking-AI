@@ -69,11 +69,17 @@ def seed(reset: bool = False, build_index: bool = True) -> dict:
     if reset:
         print("Resetting database...")
         db.reset_db()
+        # Delete the persisted index too. Resetting SQLite alone leaves learned cases
+        # retrievable from FAISS but absent from the mirror the groundedness guardrail
+        # checks against, so they get reported as fabricated citations.
         try:
             from . import rag
-            rag.reset_index()
+            rag.reset_index(delete_disk=True)
         except Exception:
             pass
+        if not build_index:
+            print("  ! index deleted and NOT rebuilt (--no-index).")
+            print("    Retrieval is unavailable until: python -m core.seed --index-only")
     else:
         db.init_db()
 

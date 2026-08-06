@@ -424,14 +424,25 @@ def _knowledge_panel() -> None:
     seeded = db.list_fraud_cases(source="seed")
     learned = db.list_fraud_cases(source="learned")
 
+    check = rag.consistency_check()
+
     c1, c2, c3 = st.columns(3)
     with c1:
-        components.kpi("Cases indexed", len(seeded) + len(learned), "in FAISS")
+        components.kpi("Cases indexed", len(seeded) + len(learned), "in SQLite mirror")
     with c2:
         components.kpi("Learned this session", len(learned),
                        "from analyst decisions", "#2563eb")
     with c3:
-        components.kpi("Vectors", rag.index_size(), "text-embedding-3-large")
+        components.kpi("Vectors", check["vectors"], "text-embedding-3-large",
+                       None if check["consistent"] else "#b91c1c")
+
+    if not check["consistent"]:
+        st.error(
+            f"**Index drift: {len(check['orphans'])} case(s) are retrievable but missing "
+            f"from the mirror** — {', '.join(check['orphans'][:5])}. Citations to these "
+            "would be reported as fabricated, producing a false hallucination alarm. "
+            "Fix before demoing:  `python -m core.seed --reset && python -m core.seed --index-only`"
+        )
 
     if learned:
         st.markdown("#### Learned during this session")

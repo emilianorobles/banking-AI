@@ -86,14 +86,34 @@ def render() -> None:
             st.rerun()
 
         if c3.button("♻️ Full reset (reseed)", use_container_width=True,
-                     help="Wipes transactions, alerts and learned cases. Rebuilds seed state."):
+                     help="Wipes transactions, alerts and learned cases, then rebuilds "
+                          "the index. Takes ~40s and needs the API."):
             from core import seed
-            with st.spinner("Reseeding…"):
-                seed.seed(reset=True, build_index=False)
+            # build_index=True is required, not optional. The reset deletes the index so
+            # learned cases cannot outlive their SQLite mirror; skipping the rebuild
+            # would leave the demo with no retrieval and therefore no citations.
+            with st.spinner("Reseeding and rebuilding the index (~40s)…"):
+                try:
+                    summary = seed.seed(reset=True, build_index=True)
+                except Exception as exc:
+                    st.error(f"Reset failed: {exc}")
+                    st.stop()
             for key in list(st.session_state.keys()):
-                if str(key).startswith(("chat::", "pending_approval::", "eval_results")):
+                if str(key).startswith(("chat::", "pending_approval::", "eval_results",
+                                        "last_injection")):
                     del st.session_state[key]
-            st.success("Reset complete. Re-file the travel notice before running the demo.")
+            if summary.get("cases"):
+                st.success(
+                    f"Reset complete — {summary['scored']:,} transactions scored, "
+                    f"{summary['cases']} cases indexed. "
+                    "**Re-file the travel notice before running the demo.**"
+                )
+            else:
+                st.error(
+                    "Reset completed but the index did NOT rebuild — retrieval and "
+                    "citations are unavailable. Fix connectivity, then run "
+                    "`python -m core.seed --index-only`."
+                )
             st.rerun()
 
     st.divider()

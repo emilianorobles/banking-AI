@@ -129,11 +129,49 @@ def index_size() -> int:
         return 0
 
 
-def reset_index() -> None:
-    """Drop the in-memory handle so the next call reloads from disk."""
+def reset_index(delete_disk: bool = False) -> None:
+    """Drop the in-memory handle so the next call reloads from disk.
+
+    `delete_disk=True` also removes the persisted index. This matters on a database
+    reset: dropping the fraud_cases table without clearing the index leaves cases that
+    are retrievable from FAISS but absent from SQLite. The groundedness guardrail
+    validates citations against SQLite, so those orphans get reported as FABRICATED
+    CITATIONS -- a false hallucination alarm on the exact metric we showcase. The index
+    and its SQLite mirror must be reset together or not at all.
+    """
     global _store
     with _lock:
         _store = None
+    if delete_disk and config.FAISS_DIR.exists():
+        import shutil
+        shutil.rmtree(config.FAISS_DIR, ignore_errors=True)
+
+
+def consistency_check() -> dict[str, Any]:
+    """Compare the FAISS index against its SQLite mirror.
+
+    Surfaced in the admin Knowledge store panel so drift is visible before a demo
+    rather than discovered during one.
+    """
+    known = db.known_case_ids()
+    vectors = index_size()
+    try:
+        store = load_index(rebuild_if_missing=False)
+        indexed = {
+            (d.metadata or {}).get("case_id")
+            for d in store.docstore._dict.values()  # noqa: SLF001 -- no public accessor
+        }
+        indexed.discard(None)
+    except Exception:
+        indexed = set()
+
+    return {
+        "vectors": vectors,
+        "sqlite_cases": len(known),
+        "orphans": sorted(indexed - known),      # in FAISS, missing from SQLite
+        "unindexed": sorted(known - indexed),    # in SQLite, missing from FAISS
+        "consistent": not (indexed - known),
+    }
 
 
 # --------------------------------------------------------------------------- #
