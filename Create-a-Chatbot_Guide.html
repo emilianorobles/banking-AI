@@ -1,0 +1,835 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Basic AI Chatbot Guide</title>
+  <style>
+    :root {
+      --ink: #17202a;
+      --muted: #607080;
+      --paper: #f6f8fb;
+      --panel: #ffffff;
+      --line: #d9e2ec;
+      --teal: #0f766e;
+      --blue: #2563eb;
+      --lime: #65a30d;
+      --amber: #b45309;
+      --red: #b91c1c;
+      --code: #111827;
+      --radius: 8px;
+      --shadow: 0 14px 36px rgba(23, 32, 42, .12);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      color-scheme: light;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(120deg, rgba(15, 118, 110, .10), transparent 28rem),
+        linear-gradient(310deg, rgba(37, 99, 235, .08), transparent 26rem),
+        var(--paper);
+      line-height: 1.6;
+    }
+
+    a { color: inherit; }
+    code, pre { font-family: "Cascadia Code", Consolas, Monaco, monospace; }
+
+    .skip-link {
+      position: absolute;
+      left: 1rem;
+      top: -4rem;
+      z-index: 20;
+      padding: .65rem .9rem;
+      color: #fff;
+      background: var(--ink);
+      border-radius: var(--radius);
+      transition: top .18s ease;
+    }
+
+    .skip-link:focus { top: 1rem; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 17.5rem minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 1.25rem;
+      background: rgba(255, 255, 255, .9);
+      border-right: 1px solid var(--line);
+      backdrop-filter: blur(14px);
+      overflow-y: auto;
+    }
+
+    .brand {
+      display: grid;
+      grid-template-columns: 2.75rem 1fr;
+      gap: .75rem;
+      align-items: center;
+      margin-bottom: 1.35rem;
+    }
+
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 2.75rem;
+      height: 2.75rem;
+      color: #fff;
+      background: linear-gradient(135deg, var(--teal), var(--blue));
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      font-weight: 900;
+    }
+
+    .brand strong,
+    .brand span {
+      display: block;
+      line-height: 1.2;
+    }
+
+    .brand span {
+      margin-top: .15rem;
+      color: var(--muted);
+      font-size: .84rem;
+    }
+
+    .nav-title {
+      margin: 1.25rem 0 .45rem;
+      color: var(--muted);
+      font-size: .72rem;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    nav a {
+      display: flex;
+      gap: .6rem;
+      align-items: center;
+      padding: .55rem .65rem;
+      color: #334155;
+      text-decoration: none;
+      border-radius: var(--radius);
+      font-size: .92rem;
+    }
+
+    nav a:hover,
+    nav a:focus-visible {
+      color: var(--teal);
+      background: #e7f7f4;
+      outline: none;
+    }
+
+    .dot {
+      flex: 0 0 auto;
+      width: .55rem;
+      height: .55rem;
+      background: var(--teal);
+      border-radius: 99px;
+    }
+
+    .dot.blue { background: var(--blue); }
+    .dot.lime { background: var(--lime); }
+    .dot.amber { background: var(--amber); }
+
+    .side-note {
+      margin-top: 1.2rem;
+      padding: .9rem;
+      color: #334155;
+      background: #f1f5f9;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      font-size: .88rem;
+    }
+
+    main {
+      min-width: 0;
+      padding-bottom: 4rem;
+    }
+
+    .hero {
+      display: grid;
+      align-items: end;
+      min-height: 82vh;
+      padding: clamp(2rem, 5vw, 4.5rem);
+      color: #fff;
+      background:
+        linear-gradient(120deg, rgba(10, 20, 30, .94), rgba(10, 20, 30, .68) 58%, rgba(10, 20, 30, .42)),
+        radial-gradient(circle at 78% 28%, rgba(255,255,255,.18), transparent 18rem),
+        repeating-linear-gradient(0deg, rgba(255,255,255,.09) 0 1px, transparent 1px 76px),
+        linear-gradient(135deg, #0f766e, #2563eb 56%, #65a30d);
+      overflow: hidden;
+    }
+
+    .hero-inner { max-width: 58rem; }
+
+    .eyebrow {
+      display: inline-flex;
+      gap: .5rem;
+      align-items: center;
+      margin-bottom: 1.15rem;
+      padding: .35rem .65rem;
+      background: rgba(255,255,255,.13);
+      border: 1px solid rgba(255,255,255,.24);
+      border-radius: 999px;
+      font-size: .88rem;
+      font-weight: 800;
+    }
+
+    h1 {
+      max-width: 53rem;
+      margin: 0;
+      font-size: clamp(2.4rem, 7vw, 5.5rem);
+      line-height: .98;
+      letter-spacing: 0;
+    }
+
+    .hero p {
+      max-width: 44rem;
+      margin: 1.35rem 0 0;
+      color: rgba(255,255,255,.86);
+      font-size: clamp(1rem, 2vw, 1.22rem);
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .75rem;
+      margin-top: 2rem;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 2.75rem;
+      padding: .7rem 1rem;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      text-decoration: none;
+      font-weight: 800;
+    }
+
+    .button.secondary {
+      color: #fff;
+      background: rgba(255,255,255,.08);
+      border-color: rgba(255,255,255,.34);
+    }
+
+    .band {
+      padding: clamp(2.2rem, 5vw, 4.5rem) clamp(1.1rem, 5vw, 4.5rem);
+    }
+
+    .narrow {
+      max-width: 72rem;
+      margin: 0 auto;
+    }
+
+    .section-head {
+      display: grid;
+      gap: .35rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .section-head h2,
+    .step h2 {
+      margin: 0;
+      font-size: clamp(1.7rem, 3.4vw, 2.75rem);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    .section-head p,
+    .step-subtitle {
+      max-width: 48rem;
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.04rem;
+    }
+
+    .grid,
+    .capability-grid {
+      display: grid;
+      gap: 1rem;
+    }
+
+    .grid { grid-template-columns: repeat(3, 1fr); }
+    .capability-grid { grid-template-columns: repeat(2, 1fr); }
+
+    .card,
+    .step,
+    .code-card,
+    .checklist {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: 0 8px 26px rgba(23, 32, 42, .06);
+    }
+
+    .card { padding: 1.1rem; }
+
+    .card h3 {
+      margin: 0 0 .45rem;
+      font-size: 1rem;
+    }
+
+    .card p,
+    .card li {
+      color: var(--muted);
+      font-size: .95rem;
+    }
+
+    .card ul {
+      display: grid;
+      gap: .35rem;
+      margin: .35rem 0 0;
+      padding-left: 1.2rem;
+    }
+
+    .step {
+      padding: clamp(1.1rem, 3vw, 2rem);
+      margin-top: 1rem;
+    }
+
+    .step-number {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 2.25rem;
+      height: 2.25rem;
+      margin-bottom: .9rem;
+      color: #fff;
+      background: var(--teal);
+      border-radius: var(--radius);
+      font-weight: 900;
+    }
+
+    .step:nth-of-type(2) .step-number { background: var(--blue); }
+    .step:nth-of-type(3) .step-number { background: var(--lime); }
+    .step:nth-of-type(4) .step-number { background: var(--amber); }
+
+    .callout {
+      margin: 1rem 0;
+      padding: 1rem;
+      background: #f8fafc;
+      border-left: 4px solid var(--teal);
+      border-radius: 0 var(--radius) var(--radius) 0;
+    }
+
+    .callout strong {
+      display: block;
+      margin-bottom: .25rem;
+    }
+
+    .warning {
+      border-left-color: var(--amber);
+      background: #fffbeb;
+    }
+
+    .danger {
+      border-left-color: var(--red);
+      background: #fef2f2;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      gap: .75rem;
+      align-items: center;
+      margin: 1rem 0;
+    }
+
+    .flow span {
+      padding: .85rem;
+      text-align: center;
+      background: #eef6ff;
+      border: 1px solid #cfe0ff;
+      border-radius: var(--radius);
+      font-weight: 800;
+    }
+
+    .flow b {
+      color: var(--teal);
+      font-size: 1.25rem;
+    }
+
+    .code-card {
+      overflow: hidden;
+      margin: 1.15rem 0;
+    }
+
+    .code-head {
+      display: flex;
+      gap: .75rem;
+      align-items: center;
+      justify-content: space-between;
+      padding: .8rem 1rem;
+      color: #fff;
+      background: var(--code);
+    }
+
+    .copy-button {
+      min-width: 5.25rem;
+      padding: .45rem .65rem;
+      color: #fff;
+      background: rgba(255,255,255,.12);
+      border: 1px solid rgba(255,255,255,.28);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 800;
+    }
+
+    pre {
+      margin: 0;
+      padding: 1rem;
+      max-height: 34rem;
+      overflow: auto;
+      color: #dbeafe;
+      background: #0f172a;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: .88rem;
+      line-height: 1.55;
+    }
+
+    .command {
+      display: flex;
+      gap: .75rem;
+      align-items: center;
+      justify-content: space-between;
+      margin: 1rem 0;
+      padding: .75rem .85rem;
+      color: #dbeafe;
+      background: #0f172a;
+      border-radius: var(--radius);
+    }
+
+    .command code {
+      overflow-wrap: anywhere;
+    }
+
+    .checklist {
+      padding: clamp(1.1rem, 3vw, 2rem);
+    }
+
+    .check-row {
+      display: grid;
+      grid-template-columns: 1.35rem 1fr;
+      gap: .75rem;
+      align-items: start;
+      padding: .8rem 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .check-row:last-child { border-bottom: 0; }
+
+    .check-row input {
+      width: 1.15rem;
+      height: 1.15rem;
+      margin-top: .22rem;
+      accent-color: var(--teal);
+    }
+
+    .footer {
+      padding: 2rem clamp(1.1rem, 5vw, 4.5rem);
+      color: #475569;
+      background: #e8eef6;
+      border-top: 1px solid var(--line);
+    }
+
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      aside {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+      nav {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: .25rem;
+      }
+      .side-note { display: none; }
+      .grid,
+      .capability-grid,
+      .flow {
+        grid-template-columns: 1fr;
+      }
+      .flow b { display: none; }
+    }
+
+    @media (max-width: 620px) {
+      aside { padding: 1rem; }
+      nav { grid-template-columns: 1fr; }
+      .hero { min-height: 74vh; padding: 2rem 1.1rem; }
+      .band { padding: 2rem 1.1rem; }
+      .code-head,
+      .command {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+
+    @media print {
+      body { background: #fff; }
+      aside, .hero-actions, .copy-button { display: none; }
+      .layout { display: block; }
+      .hero { min-height: auto; color: var(--ink); background: #fff; padding: 1rem 0 2rem; }
+      .hero p, .eyebrow { color: var(--ink); background: transparent; border: 0; padding: 0; }
+      .band { padding: 1rem 0; }
+      .card, .step, .code-card, .checklist { box-shadow: none; break-inside: avoid; }
+      pre, .command { color: #111827; background: #f8fafc; border: 1px solid #d1d5db; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to guide</a>
+  <div class="layout">
+    <aside aria-label="Guide navigation">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">CB</div>
+        <div>
+          <strong>Chatbot Guide</strong>
+          <span>Simple LLM request processing</span>
+        </div>
+      </div>
+
+      <p class="nav-title">Guide Path</p>
+      <nav>
+        <a href="#purpose"><span class="dot"></span>Purpose</a>
+        <a href="#boundaries"><span class="dot amber"></span>Boundaries</a>
+        <a href="#step-1"><span class="dot blue"></span>Install</a>
+        <a href="#step-2"><span class="dot lime"></span>Test Key</a>
+        <a href="#step-3"><span class="dot"></span>Build App</a>
+        <a href="#step-4"><span class="dot amber"></span>Run</a>
+        <a href="#checklist"><span class="dot lime"></span>Checklist</a>
+      </nav>
+
+      <p class="nav-title">Copy Blocks</p>
+      <nav>
+        <a href="#install-command">Install command</a>
+        <a href="#test-key-code">test_key.py</a>
+        <a href="#app-code">app_basic.py</a>
+        <a href="#run-command">Run command</a>
+      </nav>
+
+      <div class="side-note">
+        This is the right guide when the bot only needs the user message and the model response. No document search, no memory, no vector database.
+      </div>
+    </aside>
+
+    <main id="content">
+      <section class="hero" aria-labelledby="page-title">
+        <div class="hero-inner">
+          <div class="eyebrow">Basic AI Chatbot · Streamlit + LangChain</div>
+          <h1 id="page-title">Build a Simple AI Chatbot</h1>
+          <p>Create a lightweight chatbot that sends a user message directly to an LLM and displays the answer. It is ideal for general conversation, brainstorming, summarization, rewriting, explaining, translating, and ideation.</p>
+          <div class="hero-actions">
+            <a class="button" href="#step-1">Start Building</a>
+            <a class="button secondary" href="#boundaries">Check If This Fits</a>
+          </div>
+        </div>
+      </section>
+
+      <section id="purpose" class="band">
+        <div class="narrow">
+          <div class="section-head">
+            <h2>What This Tool Is For</h2>
+            <p>A basic chatbot sends the user message directly to the AI model and shows the answer. It does not read files automatically.</p>
+          </div>
+
+          <div class="grid">
+            <article class="card">
+              <h3>Good Uses</h3>
+              <ul>
+                <li>General conversation</li>
+                <li>Brainstorming</li>
+                <li>Summarizing pasted text</li>
+                <li>Rewriting, explaining, translating, or ideating</li>
+              </ul>
+            </article>
+            <article class="card">
+              <h3>What It Knows</h3>
+              <ul>
+                <li>What the model already knows</li>
+                <li>What the user types into the chat</li>
+                <li>Nothing from files unless the user pastes it</li>
+              </ul>
+            </article>
+            <article class="card">
+              <h3>Minimal Stack</h3>
+              <ul>
+                <li>Streamlit for the interface</li>
+                <li>LangChain OpenAI for the model client</li>
+                <li>httpx for the custom connection</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="boundaries" class="band">
+        <div class="narrow">
+          <div class="section-head">
+            <h2>Know the Boundaries</h2>
+            <p>This is the simplest useful chatbot pattern. It is powerful when the user supplies the context, but it is not a document assistant.</p>
+          </div>
+
+          <div class="capability-grid">
+            <article class="card">
+              <h3>What This Bot Can Do</h3>
+              <ul>
+                <li>Answer general questions</li>
+                <li>Explain concepts</li>
+                <li>Summarize pasted text</li>
+                <li>Generate ideas</li>
+                <li>Help with writing</li>
+              </ul>
+            </article>
+            <article class="card">
+              <h3>What This Bot Cannot Do</h3>
+              <ul>
+                <li>Answer questions about a PDF unless the user pastes the content</li>
+                <li>Search inside uploaded documents</li>
+                <li>Remember a company handbook, policy file, or research paper unless you add that capability separately</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="callout warning">
+            <strong>Decision rule</strong>
+            If users need answers from uploaded files, policies, manuals, or research papers, this guide is not enough. You need a document search or retrieval-based guide.
+          </div>
+        </div>
+      </section>
+
+      <section class="band" aria-label="Build steps">
+        <div class="narrow">
+          <article id="step-1" class="step">
+            <span class="step-number">1</span>
+            <h2>Install Only What You Need</h2>
+            <p class="step-subtitle">For a basic chatbot, you do not need PDF parsing, embeddings, or vector databases.</p>
+            <div id="install-command" class="command">
+              <code>pip install langchain-openai streamlit httpx</code>
+              <button class="copy-button" data-copy="install">Copy</button>
+            </div>
+            <span id="install" hidden>pip install langchain-openai streamlit httpx</span>
+          </article>
+
+          <article id="step-2" class="step">
+            <span class="step-number">2</span>
+            <h2>Test Your API Key</h2>
+            <p class="step-subtitle">Before building the app, confirm your key works with a small connectivity test.</p>
+
+              <div class="callout">
+                <p>
+                  Remember you can access your team API Key outside the team folder in the APIKey.xlsx file.
+                </p>
+              </div>
+            <div id="test-key-code" class="code-card">
+              <div class="code-head">
+                <strong>test_key.py</strong>
+                <button class="copy-button" data-copy="testkey">Copy</button>
+              </div>
+              <pre id="testkey">import httpx
+from langchain_openai import ChatOpenAI
+
+client = httpx.Client(verify=False)
+
+llm = ChatOpenAI(
+    base_url="https://genailab.tcs.in",
+    model="azure/genailab-maas-gpt-4.1",
+    api_key="YOUR_PROVIDED_KEY_HERE",
+    http_client=client
+)
+
+try:
+    response = llm.invoke("Hi! Are you online?")
+    print("CONNECTION SUCCESSFUL!")
+    print("AI Response:", response.content)
+except Exception as e:
+    print("ERROR: Could not connect. Check your key or internet.")
+    print(f"Details: {e}")</pre>
+            </div>
+            <div class="command">
+              <code>python test_key.py</code>
+              <button class="copy-button" data-copy="testcommand">Copy</button>
+            </div>
+            <span id="testcommand" hidden>python test_key.py</span>
+          </article>
+
+          <article id="step-3" class="step">
+            <span class="step-number">3</span>
+            <h2>Build the Basic Chatbot</h2>
+            <p class="step-subtitle">Create a file named <code>app_basic.py</code>. The app stores the chat history in the Streamlit session and sends each new user message to the model.</p>
+            <div id="app-code" class="code-card">
+              <div class="code-head">
+                <strong>app_basic.py</strong>
+                <button class="copy-button" data-copy="appbasic">Copy</button>
+              </div>
+              <pre id="appbasic">import os
+
+os.environ["CURL_CA_BUNDLE"] = ""
+os.environ["PYTHONHTTPSVERIFY"] = "0"
+
+import httpx
+import requests
+import streamlit as st
+from urllib3.exceptions import InsecureRequestWarning
+from langchain_openai import ChatOpenAI
+
+requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
+
+API_KEY = "YOUR_PROVIDED_KEY_HERE"
+BASE_URL = "https://genailab.tcs.in"
+
+
+@st.cache_resource
+def get_llm():
+    client = httpx.Client(verify=False)
+    return ChatOpenAI(
+        base_url=BASE_URL,
+        model="azure/genailab-maas-gpt-4.1",
+        api_key=API_KEY,
+        http_client=client,
+        temperature=0.7,
+    )
+
+
+def main():
+    st.set_page_config(page_title="Basic AI Chatbot", layout="wide")
+    st.title("Basic AI Chatbot")
+    st.caption("Ask general questions and get AI-generated answers.")
+
+    llm = get_llm()
+
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    user_input = st.chat_input("Type your message here...")
+
+    if user_input:
+        st.session_state.messages.append({"role": "user", "content": user_input})
+
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                try:
+                    response = llm.invoke(user_input)
+                    answer = response.content
+                    st.markdown(answer)
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": answer
+                    })
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+
+if __name__ == "__main__":
+    main()</pre>
+            </div>
+          </article>
+
+          <article id="step-4" class="step">
+            <span class="step-number">4</span>
+            <h2>Run the Chatbot</h2>
+            <p class="step-subtitle">Launch the Streamlit app from the same folder where you saved <code>app_basic.py</code>.</p>
+            <div id="run-command" class="command">
+              <code>streamlit run app_basic.py</code>
+              <button class="copy-button" data-copy="runapp">Copy</button>
+            </div>
+            <span id="runapp" hidden>streamlit run app_basic.py</span>
+
+            <div class="callout">
+              <strong>How the basic chatbot works</strong>
+              <div class="flow" aria-label="Basic chatbot flow">
+                <span>User question</span>
+                <b>-></b>
+                <span>AI model</span>
+                <b>-></b>
+                <span>Answer</span>
+              </div>
+              There is no document search step.
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="checklist" class="band">
+        <div class="narrow">
+          <div class="section-head">
+            <h2>Before You Demo</h2>
+            <p>Use this quick check to avoid presenting a bot that promises more than it can actually do.</p>
+          </div>
+
+          <div class="checklist" role="group" aria-label="Chatbot readiness checklist">
+            <label class="check-row"><input type="checkbox"> <span>The API key test works before running the full app.</span></label>
+            <label class="check-row"><input type="checkbox"> <span>The app launches with <code>streamlit run app_basic.py</code>.</span></label>
+            <label class="check-row"><input type="checkbox"> <span>The chatbot answers a normal user question.</span></label>
+            <label class="check-row"><input type="checkbox"> <span>You can explain that this bot only knows the model knowledge and the user message.</span></label>
+            <label class="check-row"><input type="checkbox"> <span>You do not claim PDF, policy, or document search unless you add that capability separately.</span></label>
+          </div>
+
+          <div class="callout danger">
+            <strong>Demo boundary</strong>
+            Do not upload a file and expect this bot to understand it. For this version, paste the relevant text into the chat or build a separate document-processing workflow.
+          </div>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <div class="narrow">
+          <strong>Keep it simple.</strong> This guide is for the fastest useful chatbot: user message in, model answer out.
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    const buttons = document.querySelectorAll("[data-copy]");
+
+    buttons.forEach((button) => {
+      button.addEventListener("click", async () => {
+        const target = document.getElementById(button.dataset.copy);
+        const original = button.textContent;
+
+        try {
+          await navigator.clipboard.writeText(target.textContent.trim());
+          button.textContent = "Copied";
+        } catch (error) {
+          const selection = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(target);
+          selection.removeAllRanges();
+          selection.addRange(range);
+          button.textContent = "Selected";
+        }
+
+        window.setTimeout(() => {
+          button.textContent = original;
+        }, 1800);
+      });
+    });
+  </script>
+</body>
+</html>
