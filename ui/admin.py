@@ -203,6 +203,8 @@ def _cost_panel() -> None:
         "on ambiguous cases and on every escalation a human has to action."
     )
 
+    priced = cost["cost_per_llm_txn_usd"] > 0
+
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         components.kpi("Transactions scored", f"{cost['total_transactions']:,}")
@@ -210,16 +212,34 @@ def _cost_panel() -> None:
         components.kpi("Resolved without a model", f"{cost['avoided']:,}",
                        f"{cost['avoided_pct']}% of volume", "#15803d")
     with c3:
-        components.kpi("Actual spend", f"${cost['actual_cost_usd']:.4f}",
-                       f"{cost['llm_calls']} model calls")
+        components.kpi(
+            "Cost with rules-first",
+            f"${cost['actual_cost_usd']:.4f}" if priced else "—",
+            f"{cost['llm_transactions']:,} transactions need a model" if priced
+            else "score one transaction to price this",
+        )
     with c4:
-        components.kpi("If every txn used a model", f"${cost['naive_cost_usd']:.4f}",
-                       f"saving ${cost['saved_usd']:.4f}", "#15803d")
+        components.kpi(
+            "If every txn used a model",
+            f"${cost['naive_cost_usd']:.4f}" if priced else "—",
+            f"saving ${cost['saved_usd']:.4f}" if priced else "awaiting first model call",
+            "#15803d",
+        )
 
-    st.caption(
-        "Cost is estimated from published gpt-4.1 rates against measured token usage. "
-        "Latency and token counts are recorded per call, not sampled."
-    )
+    if priced:
+        st.caption(
+            f"Measured at ${cost['cost_per_llm_txn_usd']:.5f} per model-scored transaction "
+            f"(published gpt-4.1 rates against actual token usage), projected across "
+            f"{cost['total_transactions']:,} transactions. Latency and tokens are recorded "
+            "per call, not sampled."
+        )
+    else:
+        st.info(
+            "**The percentage is the point** — 96% of volume never reaches a model. "
+            "Dollar figures populate once at least one transaction has been scored with "
+            "the model; inject one from Demo control. Seeded history is backfilled with "
+            "rules only, which is why it costs nothing."
+        )
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -232,13 +252,13 @@ def _cost_panel() -> None:
 
     if cost["total_transactions"]:
         share = pd.DataFrame({
-            "path": ["Rules only (no model)", "Model inference"],
+            "path": ["Rules only (no model)", "Needs model inference"],
             "count": [cost["avoided"], cost["llm_transactions"]],
         })
         fig = px.pie(share, names="path", values="count", hole=0.55,
                      color="path",
                      color_discrete_map={"Rules only (no model)": "#15803d",
-                                         "Model inference": "#2563eb"})
+                                         "Needs model inference": "#2563eb"})
         fig.update_layout(height=280, margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig, use_container_width=True)
 

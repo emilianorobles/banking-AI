@@ -371,6 +371,27 @@ def _selftest() -> int:
     db.init_db()
 
     demo = json.loads(config.DEMO_INJECTIONS_PATH.read_text(encoding="utf-8"))
+
+    # Unfreeze the hero card first. A previous fraud injection leaves it frozen, and
+    # CARD_ALREADY_FROZEN (+60) then fires on every subsequent transaction, pushing the
+    # legitimate scenarios to 100 and failing the test for the wrong reason. The same
+    # trap applies on stage: rehearsing the demo twice without unfreezing makes every
+    # beat look like fraud, which is why it is a pre-flight checklist item.
+    hero_id = demo.get("hero_customer_id")
+    if hero_id:
+        db.set_card_frozen(hero_id, False)
+
+    # File the demo travel notice if it is missing. Without it the "legitimate purchase
+    # in Spain" scenario is not testing travel suppression at all -- it is testing an
+    # unconfigured system, and the check would pass while the feature was broken.
+    notice = demo.get("travel_notice")
+    if notice and not travel.active_notices(notice["customer_id"]):
+        travel.create_notice(notice["customer_id"], notice["countries"],
+                             notice["start_date"], notice["end_date"])
+        print(f"(reset: unfroze {hero_id}, filed travel notice)")
+    else:
+        print(f"(reset: unfroze {hero_id})")
+
     failures = 0
 
     for scenario in demo["scenarios"]:

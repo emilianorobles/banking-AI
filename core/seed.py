@@ -15,7 +15,7 @@ import json
 import sys
 
 from . import config, db
-from .contracts import Customer, Transaction
+from .contracts import Customer, Transaction  # noqa: F401
 
 
 def _load_json(path):
@@ -24,6 +24,45 @@ def _load_json(path):
             f"Missing {path.name}. Run this first:\n    python -m data.generate"
         )
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def score_history(txns: list[Transaction]) -> int:
+    """Score seeded transactions with rules only, in bulk.
+
+    Deliberately rules-only: this is historical backfill, it must work with no API key,
+    and sending 2,000 transactions to a model to populate a dashboard would contradict
+    the entire cost argument the dashboard is there to make.
+    """
+    from . import pipeline
+    from .contracts import Alert, new_id
+
+    decisions, alerts = [], []
+    for txn in txns:
+        try:
+            decision = pipeline.score_transaction(txn, persist=False, allow_llm=False)
+        except Exception:
+            continue
+        decisions.append(decision)
+        if decision.action in ("CHALLENGE", "FREEZE_AND_ESCALATE", "QUARANTINE"):
+            alerts.append(Alert(
+                alert_id=new_id("ALERT"),
+                txn_id=txn.txn_id,
+                customer_id=txn.customer_id,
+                risk_score=decision.risk_score,
+                risk_level=decision.risk_level,
+                action=decision.action,
+                status="PENDING",
+                summary=(f"{txn.amount:,.2f} {txn.currency} at {txn.merchant_category} "
+                         f"in {txn.city}, {txn.country} — {decision.risk_level} "
+                         f"({decision.risk_score})"),
+                region=txn.region,
+                created_at=txn.timestamp,
+            ))
+
+    db.save_decisions_bulk(decisions)
+    db.save_alerts_bulk(alerts)
+    print(f"  scored           {len(decisions):>5}  ({len(alerts)} alerts raised, rules only)")
+    return len(decisions)
 
 
 def seed(reset: bool = False, build_index: bool = True) -> dict:
@@ -63,6 +102,15 @@ def seed(reset: bool = False, build_index: bool = True) -> dict:
 
     summary = {"customers": len(customers), "transactions": len(txns),
                "cases": 0, "travel_notices": notices}
+
+    # Score the seeded history with rules only.
+    #
+    # Without this the decisions table is empty, so the admin dashboard shows nothing,
+    # the alert queue is bare, and the cost meter reports "0% resolved without a model"
+    # -- the exact opposite of the claim it exists to support. Rules-only scoring is
+    # ~9 ms per transaction and makes no API calls, so this stays fast and offline.
+    scored = score_history(txns)
+    summary["scored"] = scored
 
     if build_index:
         try:
