@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS customers (
     card_number TEXT, account_number TEXT,
     home_country TEXT, home_city TEXT, region TEXT,
     baseline_avg_amount REAL, baseline_max_amount REAL,
-    card_frozen INTEGER DEFAULT 0
+    card_frozen INTEGER DEFAULT 0,
+    balance REAL DEFAULT 0, credit_limit REAL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
@@ -176,7 +177,7 @@ def upsert_customers(customers: Iterable[Customer]) -> None:
             """INSERT OR REPLACE INTO customers VALUES
                (:customer_id,:name,:email,:phone,:card_number,:account_number,
                 :home_country,:home_city,:region,:baseline_avg_amount,
-                :baseline_max_amount,:card_frozen)""",
+                :baseline_max_amount,:card_frozen,:balance,:credit_limit)""",
             [{**c.to_dict(), "card_frozen": int(c.card_frozen)} for c in customers],
         )
 

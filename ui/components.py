@@ -30,27 +30,164 @@ ACTION_LABELS = {
 
 
 def inject_css() -> None:
+    """One stylesheet for the whole app.
+
+    Colours are expressed against Streamlit's theme variables where possible so the UI
+    works in both light and dark mode -- the demo laptop's theme is not worth gambling on.
+    """
     st.markdown(
         """
         <style>
-          .sb-card{border:1px solid rgba(128,128,128,.25);border-radius:10px;
-                   padding:1rem 1.1rem;margin-bottom:.75rem;}
+          :root{
+            --sb-line:rgba(128,128,128,.22);
+            --sb-soft:rgba(128,128,128,.07);
+            --sb-red:#dc2626; --sb-amber:#d97706; --sb-green:#16a34a;
+            --sb-blue:#2563eb; --sb-violet:#7c3aed;
+          }
+
+          .sb-card{border:1px solid var(--sb-line);border-radius:14px;
+                   padding:1rem 1.15rem;margin-bottom:.75rem;background:var(--sb-soft);}
+          .sb-card-tight{padding:.7rem .9rem;}
           .sb-pill{display:inline-block;padding:.15rem .6rem;border-radius:999px;
-                   font-size:.75rem;font-weight:700;color:#fff;}
-          .sb-kpi{font-size:1.9rem;font-weight:800;line-height:1.1;margin:.1rem 0;}
-          .sb-kpi-label{font-size:.78rem;opacity:.7;text-transform:uppercase;
-                        letter-spacing:.05em;font-weight:700;}
-          .sb-sub{font-size:.8rem;opacity:.65;}
+                   font-size:.72rem;font-weight:800;color:#fff;letter-spacing:.02em;}
+          .sb-kpi{font-size:1.85rem;font-weight:800;line-height:1.05;margin:.15rem 0;
+                  letter-spacing:-.02em;}
+          .sb-kpi-label{font-size:.7rem;opacity:.65;text-transform:uppercase;
+                        letter-spacing:.07em;font-weight:800;}
+          .sb-sub{font-size:.78rem;opacity:.62;line-height:1.35;}
+
+          /* Hero banner */
+          .sb-hero{border-radius:18px;padding:1.4rem 1.6rem;margin-bottom:1rem;
+                   background:linear-gradient(120deg,rgba(37,99,235,.16),
+                              rgba(124,58,237,.10) 55%,rgba(22,163,74,.10));
+                   border:1px solid var(--sb-line);}
+          .sb-hero h2{margin:0 0 .2rem;font-size:1.55rem;letter-spacing:-.02em;}
+          .sb-hero p{margin:0;font-size:.9rem;opacity:.72;}
+
+          /* Score ring */
+          .sb-ring{width:104px;height:104px;border-radius:50%;display:grid;
+                   place-items:center;margin:0 auto;}
+          .sb-ring-inner{width:82px;height:82px;border-radius:50%;display:grid;
+                         place-items:center;background:var(--background-color,#0e1117);}
+          .sb-ring-score{font-size:1.6rem;font-weight:900;line-height:1;}
+          .sb-ring-max{font-size:.62rem;opacity:.6;font-weight:700;}
+
+          /* Recommendation card */
+          .sb-rec{border:1px solid var(--sb-line);border-left-width:4px;
+                  border-radius:12px;padding:.8rem 1rem;margin-bottom:.6rem;
+                  background:var(--sb-soft);}
+          .sb-rec-title{font-weight:800;font-size:.95rem;margin-bottom:.2rem;
+                        display:flex;gap:.45rem;align-items:center;}
+          .sb-rec-body{font-size:.85rem;opacity:.78;line-height:1.45;}
+
+          /* Action item */
+          .sb-action{display:flex;gap:.7rem;align-items:flex-start;padding:.65rem .8rem;
+                     border-radius:10px;margin-bottom:.45rem;border:1px solid var(--sb-line);}
+          .sb-dot{flex:0 0 auto;width:.55rem;height:.55rem;border-radius:50%;
+                  margin-top:.42rem;}
+
+          /* Security check row */
+          .sb-check{display:flex;gap:.6rem;align-items:flex-start;padding:.42rem 0;
+                    border-bottom:1px solid var(--sb-line);font-size:.86rem;}
+          .sb-check:last-child{border-bottom:0;}
+
+          /* Legacy blocks */
           .sb-rule{border-left:3px solid #94a3b8;padding:.35rem .7rem;margin:.3rem 0;
-                   font-size:.88rem;background:rgba(148,163,184,.08);}
-          .sb-cite{border-left:3px solid #2563eb;padding:.4rem .7rem;margin:.35rem 0;
-                   font-size:.85rem;background:rgba(37,99,235,.07);}
-          .sb-danger{border-left:3px solid #b91c1c;padding:.5rem .8rem;
-                     background:rgba(185,28,28,.08);border-radius:6px;}
-          .sb-ok{border-left:3px solid #15803d;padding:.5rem .8rem;
-                 background:rgba(21,128,61,.08);border-radius:6px;}
+                   font-size:.88rem;background:rgba(148,163,184,.08);border-radius:0 8px 8px 0;}
+          .sb-cite{border-left:3px solid var(--sb-blue);padding:.4rem .7rem;margin:.35rem 0;
+                   font-size:.85rem;background:rgba(37,99,235,.07);border-radius:0 8px 8px 0;}
+          .sb-danger{border-left:3px solid var(--sb-red);padding:.55rem .85rem;
+                     background:rgba(220,38,38,.09);border-radius:0 8px 8px 0;}
+          .sb-ok{border-left:3px solid var(--sb-green);padding:.55rem .85rem;
+                 background:rgba(22,163,74,.09);border-radius:0 8px 8px 0;}
+
+          /* Tighten Streamlit chrome a little */
+          div[data-testid="stMetricValue"]{font-size:1.5rem;}
+          section[data-testid="stSidebar"] .sb-sub{font-size:.75rem;}
         </style>
         """,
+        unsafe_allow_html=True,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Dashboard building blocks
+# --------------------------------------------------------------------------- #
+
+def _grade_colour(score: int) -> str:
+    if score >= 88:
+        return "#16a34a"
+    if score >= 72:
+        return "#65a30d"
+    if score >= 55:
+        return "#d97706"
+    return "#dc2626"
+
+
+def score_ring(score: int, label: str, grade: str = "") -> None:
+    """A conic-gradient score ring. Cheaper and sharper than a plotly gauge."""
+    colour = _grade_colour(score)
+    st.markdown(
+        f'<div class="sb-ring" style="background:conic-gradient({colour} '
+        f'{score * 3.6}deg, rgba(128,128,128,.18) 0deg);">'
+        f'<div class="sb-ring-inner">'
+        f'<div style="text-align:center;">'
+        f'<div class="sb-ring-score" style="color:{colour};">{score}</div>'
+        f'<div class="sb-ring-max">/ 100</div></div></div></div>'
+        f'<div style="text-align:center;margin-top:.5rem;">'
+        f'<div style="font-weight:800;font-size:.9rem;">{label}</div>'
+        f'<div class="sb-sub">{grade}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def hero(title: str, subtitle: str) -> None:
+    st.markdown(
+        f'<div class="sb-hero"><h2>{title}</h2><p>{subtitle}</p></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def stat(label: str, value: Any, sub: str = "", colour: str | None = None,
+         icon: str = "") -> None:
+    style = f"color:{colour};" if colour else ""
+    prefix = f"{icon} " if icon else ""
+    st.markdown(
+        f'<div class="sb-card sb-card-tight"><div class="sb-kpi-label">{prefix}{label}</div>'
+        f'<div class="sb-kpi" style="{style}">{value}</div>'
+        f'<div class="sb-sub">{sub}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def recommendation_card(rec: Any) -> None:
+    st.markdown(
+        f'<div class="sb-rec" style="border-left-color:{rec.colour};">'
+        f'<div class="sb-rec-title">{rec.icon} {rec.title}</div>'
+        f'<div class="sb-rec-body">{rec.body}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def action_item(item: Any) -> None:
+    colour = {"urgent": "#dc2626", "soon": "#d97706", "info": "#2563eb"}.get(
+        item.priority, "#64748b")
+    st.markdown(
+        f'<div class="sb-action" style="border-left:4px solid {colour};">'
+        f'<span class="sb-dot" style="background:{colour};"></span>'
+        f'<div><div style="font-weight:700;font-size:.88rem;">{item.title}</div>'
+        f'<div class="sb-sub">{item.detail}</div></div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def security_check(label: str, passed: bool, detail: str) -> None:
+    mark = "✅" if passed else "⚠️"
+    colour = "" if passed else "color:#d97706;"
+    st.markdown(
+        f'<div class="sb-check"><span>{mark}</span>'
+        f'<div><span style="font-weight:650;{colour}">{label}</span><br>'
+        f'<span class="sb-sub">{detail}</span></div></div>',
         unsafe_allow_html=True,
     )
 

@@ -98,6 +98,23 @@ def allowed_tools(intent: str) -> list[str]:
     return INTENT_TOOLS.get(intent, INTENT_TOOLS[Intent.GENERAL.value])
 
 
+# The tool to fall back on when the model talks about acting instead of acting. Every
+# entry is read-only and scoped to the caller, so running one unprompted is always safe.
+PRIMARY_TOOL: dict[str, str] = {
+    Intent.BALANCE.value: "get_account_summary",
+    Intent.TRANSACTIONS.value: "list_recent_transactions",
+    Intent.DISPUTE.value: "list_recent_transactions",
+    Intent.FRAUD_REPORT.value: "list_recent_transactions",
+    Intent.TRAVEL.value: "list_travel_notices",
+    Intent.CARD_CONTROL.value: "get_account_summary",
+    Intent.GENERAL.value: "get_account_summary",
+}
+
+
+def primary_tool(intent: str) -> str:
+    return PRIMARY_TOOL.get(intent, "get_account_summary")
+
+
 def route(message: str, customer_id: str, *, allow_llm: bool = True) -> dict:
     intent, why, used_llm = classify(message, allow_llm=allow_llm)
     db.audit(actor=f"agent:router", event_type="ROUTE", subject_id=customer_id,

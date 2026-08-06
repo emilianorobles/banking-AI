@@ -116,6 +116,10 @@ def make_customers(n: int = config.SEED_CUSTOMERS) -> list[Customer]:
             region=region,
             baseline_avg_amount=avg,
             baseline_max_amount=round(avg * RNG.uniform(3.0, 6.0), 2),
+            # Roughly 20-60x typical spend, so the balance reads plausibly against the
+            # transaction history rather than being an unrelated random number.
+            balance=round(avg * RNG.uniform(20, 60), 2),
+            credit_limit=round(avg * RNG.uniform(40, 90), 2),
         ))
     return customers
 
@@ -731,6 +735,89 @@ HARD_CASE_TRAVEL_NOTICES = [
 ]
 
 
+RECURRING = [
+    # (merchant, category, day_of_month, multiple_of_baseline_avg)
+    ("CityPower", "utilities", 3, 1.4),
+    ("FibreNet", "utilities", 5, 0.7),
+    ("StreamPlus", "entertainment", 8, 0.12),
+    ("AquaUtility", "utilities", 12, 0.4),
+]
+
+
+def make_rich_history(customer: Customer, months: int = 6) -> list[Transaction]:
+    """Six months of realistic activity for the demo customers.
+
+    The seeded population averages ~10 transactions each, which is fine for scoring but
+    produces empty-looking charts and a meaningless monthly projection. The customer
+    dashboard is only convincing with a real spending pattern behind it: weekly
+    groceries, monthly bills on fixed dates, occasional larger discretionary purchases,
+    and a mild upward drift so month-on-month comparisons have something to show.
+    """
+    now = datetime.now(timezone.utc)
+    profile = REGION_PROFILE[customer.region]
+    out: list[Transaction] = []
+
+    def txn(when: datetime, amount: float, merchant: str, category: str,
+            channel: str = "card_present") -> Transaction:
+        return Transaction(
+            txn_id=new_id("TXN"),
+            customer_id=customer.customer_id,
+            timestamp=when.isoformat(),
+            amount=round(max(1.0, amount), 2),
+            currency=profile["currency"],
+            merchant=merchant,
+            merchant_category=category,
+            country=customer.home_country,
+            city=customer.home_city,
+            region=customer.region,
+            channel=channel,
+            card_last4=customer.card_number[-4:],
+            device_id=f"dev-{RNG.randint(1000, 1999)}",
+            ip_address="10.0.2.7",
+            is_fraud_label=False,
+        )
+
+    avg = customer.baseline_avg_amount
+
+    for m in range(months, -1, -1):
+        month_start = (now - timedelta(days=30 * m)).replace(hour=9, minute=0, second=0)
+        # Gentle month-on-month drift so trend lines are not flat.
+        drift = 1.0 + (months - m) * 0.035
+
+        for merchant, category, day, mult in RECURRING:
+            when = month_start + timedelta(days=day - month_start.day % 28)
+            if when <= now:
+                out.append(txn(when, avg * mult * drift, merchant, category, "online"))
+
+        # Weekly groceries + fuel
+        for week in range(4):
+            when = month_start + timedelta(days=week * 7 + RNG.randint(0, 2),
+                                           hours=RNG.randint(-3, 8))
+            if when <= now:
+                out.append(txn(when, abs(RNG.gauss(avg * 0.85, avg * 0.2)),
+                               RNG.choice(MERCHANTS["groceries"]), "groceries"))
+            when2 = when + timedelta(days=2, hours=RNG.randint(0, 6))
+            if when2 <= now and RNG.random() < 0.7:
+                out.append(txn(when2, abs(RNG.gauss(avg * 0.6, avg * 0.15)),
+                               RNG.choice(MERCHANTS["fuel"]), "fuel"))
+
+        # Discretionary: restaurants, apparel, entertainment, pharmacy
+        for _ in range(RNG.randint(5, 9)):
+            when = month_start + timedelta(days=RNG.randint(0, 27),
+                                           hours=RNG.randint(-4, 10))
+            if when > now:
+                continue
+            category = RNG.choice(["restaurants", "restaurants", "apparel",
+                                   "entertainment", "pharmacy", "electronics"])
+            scale = {"restaurants": 0.5, "apparel": 1.1, "entertainment": 0.35,
+                     "pharmacy": 0.3, "electronics": 1.8}[category]
+            out.append(txn(when, abs(RNG.gauss(avg * scale * drift, avg * 0.25)),
+                           RNG.choice(MERCHANTS[category]), category,
+                           RNG.choice(["card_present", "card_present", "online"])))
+
+    return [t for t in out if datetime.fromisoformat(t.timestamp) <= now]
+
+
 def make_hero_history(hero: Customer) -> list[Transaction]:
     """Give the demo's hero customer a four-year insurance-premium record.
 
@@ -890,12 +977,18 @@ def main() -> None:
     hard_history, hard_rows = make_hard_eval_cases(customers)
     txns.extend(hard_history)
     txns.extend(make_hero_history(customers[0]))
+    # Rich six-month history for the customers anyone will actually open during the
+    # demo. Without it the dashboard charts have a dozen points and say nothing.
+    rich = []
+    for c in customers[:8]:
+        rich.extend(make_rich_history(c))
+    txns.extend(rich)
     txns.sort(key=lambda t: t.timestamp)
     config.TRANSACTIONS_PATH.write_text(
         json.dumps([t.to_dict() for t in txns], indent=2), encoding="utf-8")
     fraud_n = sum(1 for t in txns if t.is_fraud_label)
     print(f"  transactions_seed.json  {len(txns):>5} transactions ({fraud_n} fraudulent, "
-          f"{len(hard_history)} supporting hard-case history)")
+          f"{len(hard_history)} hard-case history, {len(rich)} rich demo history)")
 
     cases = make_precedents()
     with config.PRECEDENTS_PATH.open("w", encoding="utf-8") as fh:

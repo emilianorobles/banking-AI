@@ -56,8 +56,13 @@ def get_account_summary(customer_id: str) -> dict[str, Any]:
         return {"error": "Account not found."}
     notices = travel.active_notices(customer_id)
     recent = db.recent_transactions(customer_id, limit=100)
+    currency = recent[0].currency if recent else "INR"
     return {
         "name": customer.name,
+        "balance": round(customer.balance, 2),
+        "credit_limit": round(customer.credit_limit, 2),
+        "available_credit": round(max(0.0, customer.credit_limit - customer.balance), 2),
+        "currency": currency,
         "card_last4": customer.card_number[-4:],
         "card_status": "FROZEN" if customer.card_frozen else "active",
         "home_country": customer.home_country,

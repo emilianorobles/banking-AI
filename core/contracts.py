@@ -106,6 +106,11 @@ class Customer:
     baseline_avg_amount: float
     baseline_max_amount: float
     card_frozen: bool = False
+    # Account position. Present so the assistant can answer "what's my balance?" from
+    # data rather than deflecting -- a banking assistant that cannot state a balance
+    # fails the most common question it will ever be asked.
+    balance: float = 0.0
+    credit_limit: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

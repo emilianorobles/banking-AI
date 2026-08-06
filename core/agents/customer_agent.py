@@ -17,6 +17,7 @@ card on its own.
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import date
 from typing import Any
@@ -36,8 +37,7 @@ against it and always emit dates as YYYY-MM-DD.
 {injection_rule}
 
 You have tools. To use one, reply with ONLY this JSON object:
-{{"action": "tool", "tool": "<name>", "arguments": {{...}}, "say": "<short line telling \
-the customer what you're doing>"}}
+{{"action": "tool", "tool": "<name>", "arguments": {{...}}, "say": ""}}
 
 To answer directly, reply with ONLY:
 {{"action": "answer", "say": "<your reply to the customer>"}}
@@ -45,7 +45,29 @@ To answer directly, reply with ONLY:
 Available tools:
 {tools}
 
+Worked examples — follow these exactly:
+
+  Customer: "What's my balance?"
+  CORRECT:  {{"action": "tool", "tool": "get_account_summary", "arguments": {{}}, "say": ""}}
+  WRONG:    {{"action": "answer", "say": "Retrieving your account summary now."}}
+
+  Customer: "Any suspicious activity?"
+  CORRECT:  {{"action": "tool", "tool": "list_recent_transactions", \
+"arguments": {{"limit": 10}}, "say": ""}}
+  WRONG:    {{"action": "answer", "say": "Let me check your recent transactions."}}
+
+  Customer: "Thanks, that's all"
+  CORRECT:  {{"action": "answer", "say": "Anytime — I'm here if anything looks off."}}
+
+The WRONG replies are wrong because the customer reads them and nothing happens. You get \
+one turn: use it to fetch the data, and you will be asked again afterwards to write the \
+reply using the real values.
+
 Rules:
+  - NEVER announce that you are about to do something. Replies like "let me check that",
+    "I'll look into your recent transactions" or "one moment while I retrieve that" are
+    failures: the customer reads them and nothing happens. If the answer needs data,
+    return the tool action NOW. Speak only once you have the result.
   - Never invent account data. If you do not have a number, call a tool to get it.
   - Never reveal or guess full card numbers, account numbers, or other identifiers. \
 Values shown to you as tokens like <PAN_7f3a2b> must never be echoed back.
@@ -76,6 +98,27 @@ def _parse(text: str) -> dict[str, Any]:
         # The model answered in plain prose. Treat that as a direct answer rather
         # than failing the turn -- a slightly unstructured reply beats an error.
         return {"action": "answer", "say": text.strip()}
+
+
+_STALL_RE = re.compile(
+    r"\b(let me|i'?ll|i will|allow me to|give me a moment|one moment|hold on|"
+    r"i'?m going to|let'?s (check|take a look)|"
+    # Gerund-form announcements: "Retrieving your account summary...", "Checking your
+    # recent transactions...". These read as progress but nothing has happened.
+    r"(check|retriev|fetch|pull|gather|access|review|look|verif|prepar|load)ing)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_stall(text: str) -> bool:
+    """A reply that promises to do something instead of doing it.
+
+    Short and forward-looking with no actual data in it. We only treat it as a stall
+    when nothing has been retrieved yet -- "I'll cancel that for you" after a successful
+    tool call is a perfectly good sentence.
+    """
+    stripped = text.strip()
+    return bool(_STALL_RE.search(stripped)) and len(stripped) < 220
 
 
 def _fmt_result(result: Any) -> str:
@@ -150,6 +193,7 @@ def respond(
 
     executed: list[ToolCall] = []
     citations: list[str] = []
+    stall_retries = 0
 
     for _ in range(MAX_STEPS):
         try:
@@ -167,6 +211,36 @@ def respond(
 
         if decision.get("action") != "tool":
             reply = str(decision.get("say", "")).strip() or "Could you rephrase that?"
+
+            # The "let me check that" failure mode: the model promises to act instead of
+            # acting, so the customer reads a reply and nothing happens. Re-prompting
+            # alone does not fix it -- the model repeats itself and we exhaust the loop,
+            # which is worse. Ask once, then just run the obvious read-only tool for this
+            # intent and answer from real data.
+            if not executed and _is_stall(reply) and allowed:
+                if stall_retries == 0:
+                    stall_retries += 1
+                    notes.append("stall_reply_retried")
+                    user_prompt += (
+                        "\n\nSYSTEM: You replied that you would check something but "
+                        "called no tool, so nothing happened and the customer is still "
+                        "waiting. Return the tool action now, or answer directly."
+                    )
+                    continue
+
+                fallback = router.primary_tool(intent)
+                if fallback in allowed:
+                    notes.append(f"stall_fallback:{fallback}")
+                    call = tools.execute(fallback, customer_id, {})
+                    executed.append(call)
+                    say = _finalise(call, customer_id)
+                    dlp = security.scan_outbound(say)
+                    return AgentReply(
+                        text=dlp.safe_text, intent=intent, tool_calls=executed,
+                        citations=[c for c in citations if c], guardrail_notes=notes,
+                        latency_ms=int((time.perf_counter() - started) * 1000),
+                    )
+
             dlp = security.scan_outbound(reply)
             if dlp.blocked:
                 notes.append(f"dlp_egress_redacted:{','.join(dlp.violations)}")
