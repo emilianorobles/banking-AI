@@ -1,0 +1,18 @@
+# SentinelBank — pinned to the 0.3.x LangChain line.
+# The organizer guides (Create-a-Chatbot_Guide.html, Creating_RAG.pdf) are 0.3-era code.
+# Mixing langchain-openai 1.x with langchain-core 0.3.x raises:
+#   ImportError: cannot import name 'ContextOverflowError' from 'langchain_core.exceptions'
+langchain==0.3.*
+langchain-core==0.3.*
+langchain-openai==0.3.35
+langchain-community==0.3.31
+
+faiss-cpu>=1.11.0
+streamlit>=1.45.0
+fastapi>=0.115.0
+uvicorn>=0.34.0
+pandas>=2.2.0
+plotly>=6.0.0
+httpx>=0.28.0
+python-dotenv>=1.0.0
+pdfminer.six>=20250327

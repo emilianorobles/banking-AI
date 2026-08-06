@@ -1,0 +1,28 @@
+# Secrets — NEVER commit the API key
+.streamlit/secrets.toml
+.env
+
+# Scratch files that have held a live key at some point.
+# The connectivity-test snippet from the organizer guides hardcodes one.
+chatbot.txt
+test_key.py
+
+# Generated state
+*.db
+*.db-wal
+*.db-shm
+data/faiss/
+data/cached_responses.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
