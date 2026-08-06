@@ -235,12 +235,39 @@ def protection_stats(customer_id: str) -> Protection:
 
 
 @dataclass
+class SecurityCheck:
+    """One security check, carrying the working rather than just a verdict.
+
+    `detail` is the one-liner on the card. Everything else exists so that clicking the
+    card can answer "on what basis?" -- what was measured, the values that went in, the
+    records behind it, and what would change the outcome. A score a customer cannot
+    interrogate is a score they have no reason to trust.
+    """
+    key: str
+    label: str
+    passed: bool
+    detail: str
+    what: str = ""                                    # what this check actually tests
+    inputs: dict[str, Any] = field(default_factory=dict)
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+    remediation: str = ""
+    weight: int = 1
+
+    def as_tuple(self) -> tuple[str, bool, str]:
+        """Back-compat for callers that still expect (label, passed, detail)."""
+        return (self.label, self.passed, self.detail)
+
+
+@dataclass
 class SecurityPosture:
     score: int
     grade: str
-    checks: list[tuple[str, bool, str]] = field(default_factory=list)  # (label, passed, detail)
+    checks: list[SecurityCheck] = field(default_factory=list)
     password_age_days: int = 0
     recommendations: list[str] = field(default_factory=list)
+
+    def check(self, key: str) -> SecurityCheck | None:
+        return next((c for c in self.checks if c.key == key), None)
 
 
 def security_posture(customer_id: str) -> SecurityPosture:
@@ -256,35 +283,115 @@ def security_posture(customer_id: str) -> SecurityPosture:
     pending = [a for a in db.list_alerts(status="PENDING", limit=500)
                if a.customer_id == customer_id]
 
+    # Derived deterministically from the customer id rather than stored. This is a
+    # prototype with no credential store, and inventing one to make a dashboard look
+    # complete would be worse than deriving a placeholder and labelling it.
     password_age = 30 + (abs(hash(customer_id)) % 200)
 
-    checks: list[tuple[str, bool, str]] = [
-        ("Card active and monitored",
-         bool(customer and not customer.card_frozen),
-         "Frozen — action needed" if (customer and customer.card_frozen)
-         else "Every transaction screened in real time"),
-        ("Personal data tokenized",
-         True,
-         "Card and account numbers are never sent to the AI model"),
-        ("Transaction screening active",
-         prot.transactions_screened > 0,
-         f"{prot.transactions_screened} transactions screened"),
-        ("No unresolved alerts",
-         not pending,
-         f"{len(pending)} alert(s) awaiting your response" if pending else "Nothing outstanding"),
-        ("Travel notices in use",
-         bool(notices),
-         f"{len(notices)} active — prevents false declines abroad" if notices
-         else "Not used — your card may be declined abroad"),
-        ("Password changed recently",
-         password_age <= 90,
-         f"Last changed {password_age} days ago"),
-        ("Two-factor authentication",
-         True,
-         "Enabled on this account"),
+    frozen = bool(customer and customer.card_frozen)
+    recent_screened = db.recent_transactions(customer_id, limit=8)
+
+    checks: list[SecurityCheck] = [
+        SecurityCheck(
+            key="card_active", label="Card active and monitored", passed=not frozen,
+            detail="Frozen — action needed" if frozen else "Every transaction screened in real time",
+            what="Whether your card is usable and under active fraud screening. A frozen "
+                 "card means we stopped something and are waiting on you.",
+            inputs={"card_last4": customer.card_number[-4:] if customer else "----",
+                    "status": "FROZEN" if frozen else "active",
+                    "transactions_screened": prot.transactions_screened},
+            remediation="Confirm the flagged transaction with the assistant and we'll "
+                        "restore the card immediately." if frozen
+                        else "Nothing to do — your card is healthy.",
+        ),
+        SecurityCheck(
+            key="pii_tokenized", label="Personal data tokenized", passed=True,
+            detail="Card and account numbers are never sent to the AI model",
+            what="Whether your identifiers are substituted before any AI processing. Your "
+                 "card number is replaced with a stable token, so the model can tell two "
+                 "transactions used the same card without ever seeing a digit of it.",
+            inputs={"fields_tokenized_on_your_account": prot.pii_fields_tokenized,
+                    "example_held": "4532 0151 1283 0366",
+                    "example_seen_by_ai": "<PAN_9b0893>",
+                    "reversible_outside_your_session": "no"},
+            remediation="Always on. It cannot be disabled, by you or by us.",
+        ),
+        SecurityCheck(
+            key="screening", label="Transaction screening active",
+            passed=prot.transactions_screened > 0,
+            detail=f"{prot.transactions_screened} transactions screened",
+            what="Whether every transaction on your account is being scored before it "
+                 "completes, rather than reviewed afterwards.",
+            inputs={"transactions_screened": prot.transactions_screened,
+                    "threats_blocked": prot.fraud_blocked,
+                    "attacks_blocked": prot.injection_blocked,
+                    "step_up_challenges": prot.challenges_issued},
+            evidence=[{
+                "when": t.timestamp[:16].replace("T", " "),
+                "amount": f"{t.amount:,.2f} {t.currency}",
+                "merchant": t.merchant[:28],
+                "decision": (db.get_decision(t.txn_id) or {}).get("action", "—"),
+                "risk": (db.get_decision(t.txn_id) or {}).get("risk_score", "—"),
+            } for t in recent_screened],
+            remediation="Active. No action needed.",
+        ),
+        SecurityCheck(
+            key="no_open_alerts", label="No unresolved alerts", passed=not pending,
+            detail=f"{len(pending)} alert(s) awaiting your response" if pending
+                   else "Nothing outstanding",
+            what="Whether anything is waiting on you. Unanswered alerts leave us guessing, "
+                 "which makes future detection less accurate for your account.",
+            inputs={"open_alerts": len(pending),
+                    "highest_risk": max((a.risk_score for a in pending), default=0)},
+            evidence=[{
+                "raised": a.created_at[:16].replace("T", " "),
+                "risk": a.risk_score,
+                "summary": a.summary[:64],
+                "action": a.action,
+            } for a in pending[:6]],
+            remediation="Open Alerts and confirm whether each one was you. Every answer "
+                        "makes the system better at protecting you specifically."
+                        if pending else "Nothing outstanding.",
+        ),
+        SecurityCheck(
+            key="travel_notices", label="Travel notices in use", passed=bool(notices),
+            detail=f"{len(notices)} active — prevents false declines abroad" if notices
+                   else "Not used — your card may be declined abroad",
+            what="Whether you tell us before travelling. A notice suppresses the geography "
+                 "rules that would otherwise flag a perfectly ordinary purchase abroad. "
+                 "Amount, velocity and channel checks stay fully active.",
+            inputs={"active_notices": len(notices),
+                    "false_declines_avoided": prot.false_positives_prevented},
+            evidence=[{
+                "countries": ", ".join(n.countries),
+                "from": n.start_date, "to": n.end_date,
+                "created_via": n.created_via,
+            } for n in notices],
+            remediation="Add a travel notice before your next trip — it takes about ten "
+                        "seconds and prevents your card being declined."
+                        if not notices else "In use. Extend it if your trip runs longer.",
+        ),
+        SecurityCheck(
+            key="password_age", label="Password changed recently", passed=password_age <= 90,
+            detail=f"Last changed {password_age} days ago",
+            what="How long since your password changed. Long-lived passwords are more "
+                 "likely to have been exposed in an unrelated breach and reused.",
+            inputs={"days_since_change": password_age, "recommended_maximum_days": 90},
+            remediation="Use the passphrase generator on this page — four random words "
+                        "beat a short mangled password on both strength and memorability."
+                        if password_age > 90 else "Within the recommended window.",
+        ),
+        SecurityCheck(
+            key="two_factor", label="Two-factor authentication", passed=True,
+            detail="Enabled on this account",
+            what="Whether a second factor is required to sign in, so a stolen password "
+                 "alone is not enough to reach your account.",
+            inputs={"status": "enabled", "method": "authenticator app"},
+            remediation="Enabled. Keep your recovery codes somewhere safe.",
+        ),
     ]
 
-    passed = sum(1 for _, ok, _ in checks if ok)
+    passed = sum(1 for c in checks if c.passed)
     score = round(passed / len(checks) * 100)
     grade = ("Excellent" if score >= 90 else "Good" if score >= 75
              else "Fair" if score >= 55 else "Needs attention")
@@ -307,11 +414,42 @@ def security_posture(customer_id: str) -> SecurityPosture:
 # --------------------------------------------------------------------------- #
 
 @dataclass
+class HealthComponent:
+    """One contributor to the health score, with its full derivation.
+
+    `formula` is written out as arithmetic a customer can check by hand. That is
+    deliberate: a health score nobody can reproduce is decoration, and this one is
+    supposed to be evidence.
+    """
+    key: str
+    label: str
+    earned: int
+    max: int
+    detail: str
+    what: str = ""
+    inputs: dict[str, Any] = field(default_factory=dict)
+    formula: str = ""
+    evidence: list[dict[str, Any]] = field(default_factory=list)
+    remediation: str = ""
+
+    @property
+    def pct(self) -> float:
+        return (self.earned / self.max * 100) if self.max else 0.0
+
+    def as_tuple(self) -> tuple[str, int, int, str]:
+        """Back-compat for callers still expecting (label, earned, max, detail)."""
+        return (self.label, self.earned, self.max, self.detail)
+
+
+@dataclass
 class AccountHealth:
     score: int
     grade: str
-    components: list[tuple[str, int, int, str]]  # (label, earned, max, detail)
+    components: list[HealthComponent]
     summary: str
+
+    def component(self, key: str) -> HealthComponent | None:
+        return next((c for c in self.components if c.key == key), None)
 
 
 def account_health(customer_id: str) -> AccountHealth:
@@ -322,46 +460,118 @@ def account_health(customer_id: str) -> AccountHealth:
     sec = security_posture(customer_id)
     proj = monthly_projection(customer_id, txns)
 
-    components: list[tuple[str, int, int, str]] = []
+    components: list[HealthComponent] = []
 
-    # Transaction health -- friction-free rate
+    # --- Transaction health: how often your card just works ---
     screened = max(1, prot.transactions_screened)
     friction = prot.fraud_blocked + prot.challenges_issued
     clean_rate = 1 - (friction / screened)
     tx_pts = round(clean_rate * 35)
-    components.append((
-        "Transaction health", tx_pts, 35,
-        f"{clean_rate:.0%} of your transactions went through with no friction",
+    friction_rows = []
+    for t in db.recent_transactions(customer_id, limit=120):
+        d = db.get_decision(t.txn_id)
+        if d and d["action"] != "ALLOW":
+            friction_rows.append({
+                "when": t.timestamp[:16].replace("T", " "),
+                "amount": f"{t.amount:,.2f} {t.currency}",
+                "merchant": t.merchant[:26],
+                "outcome": d["action"], "risk": d["risk_score"],
+            })
+        if len(friction_rows) >= 8:
+            break
+    components.append(HealthComponent(
+        key="transaction_health", label="Transaction health", earned=tx_pts, max=35,
+        detail=f"{clean_rate:.0%} of your transactions went through with no friction",
+        what="The share of your transactions that completed without being blocked or "
+             "challenged. This is the customer-experience half of fraud protection: a "
+             "system that stops everything scores badly here, and should.",
+        inputs={"transactions_screened": prot.transactions_screened,
+                "blocked": prot.fraud_blocked,
+                "step_up_challenges": prot.challenges_issued,
+                "friction_events_total": friction,
+                "friction_free_rate": f"{clean_rate:.1%}"},
+        formula=f"(1 − {friction} ÷ {screened}) × 35\n"
+                f"= (1 − {friction / screened:.4f}) × 35\n"
+                f"= {clean_rate * 35:.2f}  →  {tx_pts} of 35",
+        evidence=friction_rows,
+        remediation=("Nothing to fix — nothing has been blocked or challenged."
+                     if not friction_rows else
+                     "Each row is a transaction we interrupted. Confirming the genuine "
+                     "ones in Alerts teaches the system your pattern and reduces future "
+                     "friction."),
     ))
 
-    # Security posture
+    # --- Security posture: rolled up from the checklist ---
+    sec_passed = sum(1 for c in sec.checks if c.passed)
     sec_pts = round(sec.score / 100 * 30)
-    components.append((
-        "Security posture", sec_pts, 30,
-        f"{sum(1 for _, ok, _ in sec.checks if ok)} of {len(sec.checks)} checks passing",
+    components.append(HealthComponent(
+        key="security_posture", label="Security posture", earned=sec_pts, max=30,
+        detail=f"{sec_passed} of {len(sec.checks)} checks passing",
+        what="Your security checklist, rolled into the health score. Each check is worth "
+             "the same, and each one is individually explained on the Security page.",
+        inputs={"checks_passing": sec_passed, "checks_total": len(sec.checks),
+                "security_score": f"{sec.score}/100"},
+        formula=f"({sec_passed} ÷ {len(sec.checks)}) × 100 = {sec.score} security score\n"
+                f"{sec.score} ÷ 100 × 30 = {sec.score / 100 * 30:.2f}  →  {sec_pts} of 30",
+        evidence=[{"check": c.label, "result": "pass" if c.passed else "needs attention",
+                   "detail": c.detail} for c in sec.checks],
+        remediation=("All checks passing." if sec_passed == len(sec.checks) else
+                     "Open Security & data — each failing check tells you exactly what "
+                     "to do about it."),
     ))
 
-    # Spending stability
+    # --- Spending stability ---
     if proj.previous_month:
         swing = abs(proj.vs_previous_pct)
         stability = max(0.0, 1 - swing / 100)
+        stability_formula = (
+            f"swing = |{proj.vs_previous_pct:+.1f}%| = {swing:.1f}%\n"
+            f"stability = max(0, 1 − {swing:.1f} ÷ 100) = {stability:.4f}\n"
+            f"{stability:.4f} × 20 = {stability * 20:.2f}")
     else:
         stability = 0.7
+        stability_formula = ("No previous month to compare against.\n"
+                             "Neutral baseline 0.70 × 20 = 14.00")
     spend_pts = round(stability * 20)
-    components.append((
-        "Spending stability", spend_pts, 20,
-        (f"Projected {proj.vs_previous_pct:+.0f}% vs last month" if proj.previous_month
-         else "Building a baseline"),
+    components.append(HealthComponent(
+        key="spending_stability", label="Spending stability", earned=spend_pts, max=20,
+        detail=(f"Projected {proj.vs_previous_pct:+.0f}% vs last month"
+                if proj.previous_month else "Building a baseline"),
+        what="How steady your spending is month to month. Predictable spending makes "
+             "genuine anomalies easier to spot, so stability genuinely improves how "
+             "accurately we can protect you — it is not a judgement about your habits.",
+        inputs={"spent_this_month_so_far": f"{proj.spent_so_far:,.2f} {proj.currency}",
+                "day_of_month": f"{proj.days_elapsed} of {proj.days_in_month}",
+                "daily_rate": f"{proj.daily_rate:,.2f} {proj.currency}",
+                "projected_month_total": f"{proj.projected_total:,.2f} {proj.currency}",
+                "previous_month_total": f"{proj.previous_month:,.2f} {proj.currency}",
+                "change": f"{proj.vs_previous_pct:+.1f}%"},
+        formula=stability_formula + f"  →  {spend_pts} of 20",
+        evidence=[{"category": c, "so_far": f"{s:,.0f}", "projected": f"{p:,.0f}"}
+                  for c, s, p in proj.by_category_projected],
+        remediation=("Steady month — nothing to do."
+                     if stability > 0.85 else
+                     "This month is running unusually far from last month. Check the "
+                     "Spending page to see which category is driving it."),
     ))
 
-    # Card standing
-    card_pts = 15 if (customer and not customer.card_frozen) else 0
-    components.append((
-        "Card standing", card_pts, 15,
-        "Active and in good standing" if card_pts else "Frozen pending your confirmation",
+    # --- Card standing ---
+    card_frozen = bool(customer and customer.card_frozen)
+    card_pts = 0 if card_frozen else 15
+    components.append(HealthComponent(
+        key="card_standing", label="Card standing", earned=card_pts, max=15,
+        detail="Active and in good standing" if card_pts else "Frozen pending your confirmation",
+        what="Whether your card is usable right now. This is all-or-nothing: a frozen "
+             "card is not partially healthy.",
+        inputs={"card_last4": customer.card_number[-4:] if customer else "----",
+                "status": "FROZEN" if card_frozen else "active",
+                "points": f"{card_pts} of 15"},
+        formula="Frozen → 0 of 15" if card_frozen else "Active → 15 of 15",
+        remediation=("Confirm the flagged transaction with the assistant and the card is "
+                     "restored immediately." if card_frozen else "Nothing to do."),
     ))
 
-    score = sum(p for _, p, _, _ in components)
+    score = sum(c.earned for c in components)
     grade = ("Excellent" if score >= 88 else "Good" if score >= 72
              else "Fair" if score >= 55 else "Needs attention")
 

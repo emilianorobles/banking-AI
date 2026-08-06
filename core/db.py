@@ -108,6 +108,21 @@ CREATE TABLE IF NOT EXISTS fraud_cases (
     source TEXT, created_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS notifications (
+    notification_id TEXT PRIMARY KEY,
+    customer_id TEXT, kind TEXT, severity TEXT,
+    subject TEXT, body TEXT, detail TEXT,
+    related_id TEXT, created_at TEXT,
+    read INTEGER DEFAULT 0, channels TEXT, meta TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_notif_customer ON notifications(customer_id, created_at);
+
+CREATE TABLE IF NOT EXISTS spending_alerts (
+    alert_id TEXT PRIMARY KEY,
+    customer_id TEXT, threshold REAL, period TEXT,
+    created_at TEXT, active INTEGER DEFAULT 1
+);
+
 -- Counts transactions that never needed an LLM call. Powers the cost meter.
 CREATE TABLE IF NOT EXISTS counters (
     name TEXT PRIMARY KEY,
@@ -584,6 +599,89 @@ def save_telemetry(tel: LLMTelemetry) -> None:
             )
     except Exception:
         pass
+
+
+# --------------------------------------------------------------------------- #
+# Notifications
+# --------------------------------------------------------------------------- #
+
+def save_notification(n) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO notifications VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (n.notification_id, n.customer_id, n.kind, n.severity, n.subject, n.body,
+             n.detail, n.related_id, n.created_at, int(n.read), n.channels, _j(n.meta)),
+        )
+
+
+def list_notifications(customer_id: str | None = None, limit: int = 50,
+                       unread_only: bool = False) -> list[dict[str, Any]]:
+    sql = "SELECT * FROM notifications WHERE 1=1"
+    params: list[Any] = []
+    if customer_id:
+        sql += " AND customer_id=?"
+        params.append(customer_id)
+    if unread_only:
+        sql += " AND read=0"
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    with connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["read"] = bool(d["read"])
+        d["meta"] = _unj(d["meta"], {})
+        out.append(d)
+    return out
+
+
+def get_notification(notification_id: str) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM notifications WHERE notification_id=?",
+                           (notification_id,)).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    d["read"] = bool(d["read"])
+    d["meta"] = _unj(d["meta"], {})
+    return d
+
+
+def unread_notification_count(customer_id: str) -> int:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) n FROM notifications WHERE customer_id=? AND read=0",
+            (customer_id,)).fetchone()
+    return int(row["n"])
+
+
+def mark_notification_read(notification_id: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE notifications SET read=1 WHERE notification_id=?",
+                     (notification_id,))
+
+
+def mark_all_notifications_read(customer_id: str) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE notifications SET read=1 WHERE customer_id=?", (customer_id,))
+
+
+def save_spending_alert(alert_id: str, customer_id: str, threshold: float,
+                        period: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO spending_alerts VALUES (?,?,?,?,?,1)",
+            (alert_id, customer_id, threshold, period, now_iso()),
+        )
+
+
+def list_spending_alerts(customer_id: str) -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM spending_alerts WHERE customer_id=? AND active=1 "
+            "ORDER BY created_at DESC", (customer_id,)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def bump(counter: str, by: int = 1) -> None:

@@ -400,8 +400,8 @@ def _security(customer_id, sec, prot) -> None:
 
     with left:
         st.markdown("#### Your security checklist")
-        for label, passed, detail in sec.checks:
-            components.security_check(label, passed, detail)
+        for c in sec.checks:
+            components.security_check(c.label, c.passed, c.detail)
 
         if sec.recommendations:
             st.markdown("#### Suggested next steps")

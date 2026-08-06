@@ -102,7 +102,7 @@ def _facts(customer_id: str) -> dict[str, Any]:
         "health_score": health.score,
         "health_grade": health.grade,
         "security_score": sec.score,
-        "security_failing_checks": [lbl for lbl, ok, _ in sec.checks if not ok],
+        "security_failing_checks": [c.label for c in sec.checks if not c.passed],
         "password_age_days": sec.password_age_days,
         "transactions_screened": prot.transactions_screened,
         "fraud_blocked": prot.fraud_blocked,
