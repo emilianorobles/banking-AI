@@ -157,9 +157,33 @@ blocked on an API key.** The whole app runs today with `DEMO_MODE=off` (rules on
 - [x] Eval set hardened: 8 cases mirroring real production false positives
 - [x] `core/record_demo.py` — offline cache recorder + verifier
 - [x] `docs/DEMO_SCRIPT.md`, `docs/ARCHITECTURE.md`
-- [ ] **← NEXT: run `python -m core.record_demo`, then re-run it with Wi-Fi OFF**
-- [ ] Slide deck (architecture doc is structured to feed it)
+- [x] Offline fallback verified against a dead endpoint — all 7 beats, citations intact
+- [x] Full UI walkthrough in a browser; three demo-breaking bugs found and fixed
+- [ ] **← NEXT: slide deck** (docs/ARCHITECTURE.md headings map to slides)
 - [ ] Demo rehearsed 3× under 10:00, screen recording captured
+- [ ] Re-run `python -m core.record_demo` after any prompt/scenario change
+
+### Three bugs the browser walkthrough caught that CLI tests could not
+
+1. **Nested expander crash.** `decision_card()` opened an expander inside the alert
+   queue's expander. Streamlit raises `StreamlitAPIException` and silently drops every
+   widget after it — the **Confirm fraud / False positive buttons never rendered**, killing
+   the human-in-the-loop beat and the learning-loop climax. Fixed with `use_expander=False`.
+
+2. **Cost meter inverted.** On a clean reseed it read *"2 transactions scored, 0% resolved
+   without a model"* with a negative saving. Seeding never scored anything, cost came from
+   unscoped telemetry, and "avoided" counted `llm_used` rather than rule score.
+
+3. **`width="stretch"` doesn't exist in Streamlit 1.45.1** (20 call sites). It throws, and
+   on a form it means no submit button — login was impossible.
+
+### Stateful demo traps (both are pre-flight checklist items)
+
+- Injecting fraud **freezes the hero's card**. `CARD_ALREADY_FROZEN` is +60, so every later
+  transaction scores ~100 and each beat looks like fraud. Click **Unfreeze hero card**
+  between rehearsals.
+- A reseed **wipes the travel notice**. Without it the Spain beat isn't testing suppression
+  at all. Click **File travel notice (Spain)** before running the demo.
 
 ### Two defects the evaluation harness caught (both fixed)
 
@@ -182,11 +206,16 @@ add points.
 
 | | |
 |---|---|
-| Transactions needing no model | **96.7%** (1,934 / 2,000) — the cost argument |
+| Transactions needing no model | **96.0%** (1,966 / 2,047) — the cost argument |
+| Cost per model-scored transaction | **$0.00757** (measured tokens, gpt-4.1 rates) |
+| Projected cost | **$0.61** rules-first vs **$15.50** all-model — 96% saving |
 | Rule separation | fraud mean **89.0** vs legitimate **2.0** |
-| Recall | **100%** |
+| Recall | **100%** (rules alone, and with the agent) |
+| Legitimate customers blocked | **0** — before and after the agent |
+| Legitimate customers challenged | **12 → 9** with the agent |
 | Groundedness | **100%** — no fabricated citations |
-| Hard eval cases that defeat rules alone | **7 of 8** |
+| Hard eval cases that defeat rules alone | **7 of 8**; agent resolves 3 |
+| p95 latency | ~3.4 s model calls · ~9 ms cheap path |
 
 **Be honest about the A/B in the pitch.** The rules are strong enough that the model adds
 little raw detection accuracy. Its real value is the explanation an analyst needs to act,
