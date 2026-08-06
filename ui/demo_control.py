@@ -25,11 +25,26 @@ def _load_demo() -> dict:
 
 
 def _inject(scenario: dict) -> tuple[Transaction, object]:
+    """Score an injected transaction, narrating each pipeline stage as it runs.
+
+    Retrieval and inference take a few seconds. Showing the stage names turns that wait
+    into a live walkthrough of the architecture instead of a spinner — the judges watch
+    the pipeline work rather than watching you wait.
+    """
     payload = dict(scenario["txn"])
     payload["txn_id"] = new_id("TXN")
     payload.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
     txn = Transaction(**payload)
-    decision = pipeline.score_transaction(txn, persist=True)
+
+    with st.status("Scoring transaction…", expanded=True) as status:
+        def on_step(label: str) -> None:
+            status.write(f"→ {label}")
+
+        decision = pipeline.score_transaction(txn, persist=True, on_step=on_step)
+        status.update(
+            label=f"{decision.action} · risk {decision.risk_score} · {decision.latency_ms} ms",
+            state="complete", expanded=False,
+        )
     return txn, decision
 
 

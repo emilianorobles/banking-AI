@@ -158,8 +158,14 @@ def transaction_to_query(txn: Transaction, rule_reasons: list[str] | None = None
     return ". ".join(parts)
 
 
-def search(query: str, k: int | None = None) -> list[dict[str, Any]]:
-    """Return the top-k most similar historical cases with similarity scores."""
+def search(
+    query: str, k: int | None = None, outcome: str | None = None
+) -> list[dict[str, Any]]:
+    """Return the top-k most similar historical cases with similarity scores.
+
+    `outcome` restricts results to 'confirmed_fraud' or 'false_positive' -- used by
+    search_balanced() to guarantee the agent sees precedent from both directions.
+    """
     k = k or config.RAG_TOP_K
     try:
         store = load_index()
@@ -167,7 +173,10 @@ def search(query: str, k: int | None = None) -> list[dict[str, Any]]:
         return []
 
     try:
-        hits = store.similarity_search_with_score(query, k=k)
+        if outcome:
+            hits = store.similarity_search_with_score(query, k=k, filter={"outcome": outcome})
+        else:
+            hits = store.similarity_search_with_score(query, k=k)
     except Exception:
         return []
 
@@ -182,10 +191,40 @@ def search(query: str, k: int | None = None) -> list[dict[str, Any]]:
     return results
 
 
+def search_balanced(query: str, k: int | None = None) -> list[dict[str, Any]]:
+    """Retrieve confirmed-fraud AND false-positive precedents separately, then merge.
+
+    Why this exists: plain top-k similarity is biased by whatever the corpus happens to
+    contain more of. Ours holds more confirmed-fraud cases than false positives (as would
+    any real bank's), so an unfiltered search returns three fraud precedents for almost
+    any flagged transaction -- and an agent reasoning faithfully from that evidence
+    concludes "fraud" every time. The retrieval, not the model, was the bias.
+
+    Splitting the query by outcome guarantees the agent sees both sides: what this pattern
+    looks like when it turned out to be fraud, and what it looks like when it turned out
+    to be a legitimate customer. That is how a human analyst actually works a case, and it
+    is what makes the false-positive precedents in the corpus reachable at all.
+    """
+    k = k or config.RAG_TOP_K
+    half = max(1, k // 2)
+
+    fraud = search(query, k=half + 1, outcome="confirmed_fraud")
+    legit = search(query, k=half + 1, outcome="false_positive")
+
+    # Interleave so the top of the list alternates -- neither side gets primacy.
+    merged: list[dict[str, Any]] = []
+    for i in range(max(len(fraud), len(legit))):
+        if i < len(fraud):
+            merged.append(fraud[i])
+        if i < len(legit):
+            merged.append(legit[i])
+    return merged[:k + 1]
+
+
 def search_for_transaction(
     txn: Transaction, rule_reasons: list[str] | None = None, k: int | None = None
 ) -> list[dict[str, Any]]:
-    return search(transaction_to_query(txn, rule_reasons), k=k)
+    return search_balanced(transaction_to_query(txn, rule_reasons), k=k)
 
 
 def format_precedents(cases: list[dict[str, Any]]) -> str:
@@ -196,16 +235,29 @@ def format_precedents(cases: list[dict[str, Any]]) -> str:
     """
     if not cases:
         return "No similar historical cases found in the knowledge store."
-    blocks = []
-    for c in cases:
-        blocks.append(
+
+    def block(c: dict[str, Any]) -> str:
+        return (
             f"[{c.get('case_id')}] {c.get('title')}\n"
-            f"  Outcome: {c.get('outcome')} | Region: {c.get('region')} | "
-            f"Channel: {c.get('channel')} | Similarity: {c.get('similarity')}\n"
+            f"  Region: {c.get('region')} | Channel: {c.get('channel')} | "
+            f"Similarity: {c.get('similarity')}\n"
             f"  Patterns: {c.get('pattern_tags')}\n"
             f"  Analyst note: {c.get('analyst_note')}"
         )
-    return "\n\n".join(blocks)
+
+    # Grouped and labelled rather than interleaved, so the model cannot skim past the
+    # exonerating half. Both headings always appear, even when empty -- an absence of
+    # false-positive precedent is itself information.
+    fraud = [c for c in cases if c.get("outcome") == "confirmed_fraud"]
+    legit = [c for c in cases if c.get("outcome") == "false_positive"]
+
+    out = ["### Cases like this that turned out to be FRAUD"]
+    out.append("\n\n".join(block(c) for c in fraud) if fraud
+               else "(none retrieved — no close fraud precedent for this pattern)")
+    out.append("\n### Cases like this that turned out to be LEGITIMATE (false positives)")
+    out.append("\n\n".join(block(c) for c in legit) if legit
+               else "(none retrieved — no close false-positive precedent for this pattern)")
+    return "\n".join(out)
 
 
 # --------------------------------------------------------------------------- #

@@ -16,7 +16,7 @@ Run a self-test:  python -m core.pipeline --selftest
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, Callable
 
 from . import config, db, llm, rag, rules, security, travel
 from .agents import fraud_analyst
@@ -30,7 +30,9 @@ from .contracts import (
 )
 
 
-def _customer_context(customer: Customer, history: list[Transaction]) -> str:
+def _customer_context(
+    customer: Customer, history: list[Transaction], txn: Transaction | None = None
+) -> str:
     """Compact behavioural profile for the analyst prompt. No PII -- tokens only."""
     countries = sorted({t.country for t in history})
     notices = travel.active_notices(customer.customer_id)
@@ -42,6 +44,32 @@ def _customer_context(customer: Customer, history: list[Transaction]) -> str:
         f"{', '.join(countries) if countries else 'none'}",
         f"Card currently frozen: {'YES' if customer.card_frozen else 'no'}",
     ]
+
+    # Merchant and category familiarity. A large charge at a merchant the customer has
+    # used before is a very different proposition from a large charge at a new one --
+    # this is the single most useful legitimacy signal the rules cannot express, because
+    # rules only ever add risk and never subtract it.
+    if txn is not None:
+        same_merchant = [t for t in history if t.merchant.lower() == txn.merchant.lower()]
+        same_category = [t for t in history if t.merchant_category == txn.merchant_category]
+        if same_merchant:
+            amounts = [t.amount for t in same_merchant]
+            lines.append(
+                f"MERCHANT FAMILIARITY: the customer has used '{txn.merchant}' "
+                f"{len(same_merchant)} time(s) before "
+                f"(amounts {min(amounts):,.2f}-{max(amounts):,.2f}). "
+                "This is an established relationship, not a new payee."
+            )
+        else:
+            lines.append(f"MERCHANT FAMILIARITY: no prior transactions with '{txn.merchant}'.")
+        if same_category:
+            cat_max = max(t.amount for t in same_category)
+            lines.append(
+                f"CATEGORY HISTORY: {len(same_category)} prior '{txn.merchant_category}' "
+                f"transaction(s), largest {cat_max:,.2f}."
+            )
+        else:
+            lines.append(f"CATEGORY HISTORY: no prior '{txn.merchant_category}' activity.")
     if notices:
         lines.append("Active travel notices: " + "; ".join(travel.describe(n) for n in notices))
     else:
@@ -49,14 +77,40 @@ def _customer_context(customer: Customer, history: list[Transaction]) -> str:
     return "\n".join(lines)
 
 
-def _blend(rule_score: int, llm_score: int) -> int:
-    """Combine the deterministic and model scores.
+# Asymmetric blend weights. See _blend() for the reasoning.
+LLM_WEIGHT_EXCULPATORY = 0.65   # model argues the transaction is SAFER than rules think
+LLM_WEIGHT_INCRIMINATING = 0.25  # model argues it is MORE dangerous
 
-    The model gets the larger weight because its job is weighing ambiguity, but a very
-    high rule score sets a floor it cannot argue away. "Two countries forty minutes
-    apart" is a fact; no amount of model confidence should be able to talk past it.
+
+def _blend(rule_score: int, llm_score: int) -> int:
+    """Combine the deterministic and model scores -- asymmetrically, and deliberately so.
+
+    We measured this. With a symmetric blend the model made outcomes WORSE: it left
+    recall unchanged at 100% but pushed the average risk score on legitimate customers
+    from 19.1 to 24.9 and blocked one who would otherwise have been allowed. Shown a list
+    of rules that fired plus fraud precedents, a language model piles on. It is agreeable,
+    and agreeableness in a fraud system means declining good customers.
+
+    So we split the model's authority by direction, which matches where each layer is
+    actually competent:
+
+      * The rules are already excellent at DETECTING risk -- 100% recall on our eval set.
+        They need no help finding fraud, so the model's incriminating opinion is
+        discounted heavily. It can nudge, not drive.
+
+      * What rules cannot do is EXONERATE. A rule can only ever add points; it has no way
+        to express "this is a 4x-baseline charge, but it is the same annual insurance
+        premium this customer has paid for four years." That judgement needs retrieved
+        precedent and context, and it is exactly what the model is good at. So when the
+        model argues a transaction is safer than the rules think, we listen.
+
+    A very high rule score still sets a floor. "Two countries forty minutes apart" is a
+    fact of physics, not an opinion, and no amount of model confidence talks past it.
     """
-    blended = round(0.4 * rule_score + 0.6 * llm_score)
+    weight = (LLM_WEIGHT_EXCULPATORY if llm_score < rule_score
+              else LLM_WEIGHT_INCRIMINATING)
+    blended = round((1 - weight) * rule_score + weight * llm_score)
+
     if rule_score >= 90:
         blended = max(blended, rule_score)
     return max(0, min(100, int(blended)))
@@ -74,14 +128,26 @@ def score_transaction(
     *,
     persist: bool = True,
     allow_llm: bool = True,
+    on_step: Callable[[str], None] | None = None,
 ) -> Decision:
     """Score one transaction end to end. This is the system's single entry point.
 
     Never raises: any internal failure degrades to the deterministic rule score, which
     is the conservative outcome. A fraud system that crashes is worse than one that
     falls back to rules.
+
+    `on_step` receives a short label as each stage begins. The UI uses it to show the
+    pipeline working rather than a spinner -- retrieval and inference take seconds, and
+    naming the stage turns dead air into a visible demonstration of the architecture.
     """
     started = time.perf_counter()
+
+    def step(label: str) -> None:
+        if on_step is not None:
+            try:
+                on_step(label)
+            except Exception:
+                pass
 
     customer = db.get_customer(txn.customer_id)
     if customer is None:
@@ -97,6 +163,7 @@ def score_transaction(
     history = db.customer_transaction_history(txn.customer_id, txn.timestamp, limit=50)
 
     # --- 1. PII tokenization vault -------------------------------------------
+    step("Tokenizing personal data — nothing raw reaches the model")
     vault = security.PIIVault()
     # Seed the vault with the customer's known identifiers so they are tokenized even
     # when they appear in an unexpected field (e.g. stuffed into a merchant name).
@@ -106,6 +173,7 @@ def score_transaction(
     masked_txn, pii_found = vault.tokenize_obj(txn.to_dict())
 
     # --- 2. Deterministic rules + 3. travel suppression -----------------------
+    step(f"Running {len(rules.RULES)} deterministic rules")
     suppressed_by_travel, notice_id = travel.is_suppressed(txn)
     suppress_set = travel.SUPPRESSIBLE_RULES if suppressed_by_travel else set()
     rule_score, active_hits, suppressed_hits = rules.evaluate(
@@ -132,6 +200,7 @@ def score_transaction(
         )
 
     # --- 4. Prompt-injection check on untrusted fields ------------------------
+    step("Scanning attacker-controlled fields for injection")
     injection = security.detect_injection(txn.merchant, txn.city, txn.merchant_category)
     if injection.detected:
         # An attacker trying to steer the scoring system is itself conclusive. We do not
@@ -168,16 +237,18 @@ def score_transaction(
         return decision
 
     # --- 6. RAG retrieval -----------------------------------------------------
+    step("Retrieving similar historical cases — both fraud and false positives")
     reasons = [h.reason for h in active_hits]
     precedents = rag.search_for_transaction(txn, reasons)
     decision.retrieved_case_ids = [p.get("case_id", "") for p in precedents if p.get("case_id")]
 
     # --- 7. Fraud analyst agent ----------------------------------------------
+    step("Fraud analyst agent reasoning over the evidence")
     verdict = fraud_analyst.analyse(
         masked_txn=masked_txn,
         rules_text=rules.explain(active_hits),
         precedents_text=rag.format_precedents(precedents),
-        customer_context=_customer_context(customer, history),
+        customer_context=_customer_context(customer, history, txn),
     )
 
     if verdict.error:
@@ -203,6 +274,7 @@ def score_transaction(
         decision.guardrail_notes.append("reflection:revised" if verdict.revised else "reflection:held")
 
     # --- 8. Guardrails --------------------------------------------------------
+    step("Validating citations, scanning output for data leakage")
     grounded, fabricated = security.validate_citations(
         verdict.cited_case_ids, db.known_case_ids()
     )

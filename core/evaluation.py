@@ -42,9 +42,18 @@ def load_eval_set() -> list[dict[str, Any]]:
     return rows
 
 
-# Anything above ALLOW counts as "flagged" -- from the customer's point of view, a
-# step-up challenge is friction, so it belongs on the positive side of the matrix.
-FLAGGED_ACTIONS = {"CHALLENGE", "FREEZE_AND_ESCALATE", "QUARANTINE"}
+# Two different harms, deliberately measured separately.
+#
+# BLOCKING a legitimate customer is a churn event: their card stops working in a shop,
+# they call support, and some of them leave. CHALLENGING them is a push notification.
+# Reporting a single "false positive rate" that conflates the two hides the distinction
+# a bank actually cares about -- and a graded response is the entire reason the CHALLENGE
+# tier exists. So we report both, and never quote one without the other.
+BLOCKING_ACTIONS = {"FREEZE_AND_ESCALATE", "QUARANTINE"}
+FRICTION_ACTIONS = {"CHALLENGE"} | BLOCKING_ACTIONS
+
+# Detection: any response above ALLOW counts as having caught the fraud.
+FLAGGED_ACTIONS = FRICTION_ACTIONS
 
 
 def run_case(row: dict[str, Any], *, allow_llm: bool = True) -> dict[str, Any]:
@@ -68,6 +77,7 @@ def run_case(row: dict[str, Any], *, allow_llm: bool = True) -> dict[str, Any]:
         "eval_kind": row.get("eval_kind", "unknown"),
         "label": label,
         "flagged": flagged,
+        "blocked": decision.action in BLOCKING_ACTIONS,
         "correct": flagged == label,
         "risk_score": decision.risk_score,
         "action": decision.action,
@@ -100,9 +110,26 @@ def summarise(results: list[dict[str, Any]]) -> dict[str, Any]:
 
     latencies = [r["latency_ms"] for r in results] or [0]
 
+    # Harm to legitimate customers, split by severity.
+    legit = [r for r in results if not r["label"]]
+    blocked_legit = sum(1 for r in legit if r["blocked"])
+    friction_legit = sum(1 for r in legit if r["flagged"])
+    avg_score_legit = (statistics.mean([r["risk_score"] for r in legit])
+                       if legit else 0.0)
+    avg_score_fraud = (statistics.mean(
+        [r["risk_score"] for r in results if r["label"]]) if tp + fn else 0.0)
+
     return {
         "n": len(results),
         "tp": tp, "fn": fn, "fp": fp, "tn": tn,
+        "legit_n": len(legit),
+        "blocked_legit": blocked_legit,
+        "friction_legit": friction_legit,
+        "block_rate_legit": blocked_legit / len(legit) if legit else 0.0,
+        "friction_rate_legit": friction_legit / len(legit) if legit else 0.0,
+        "avg_score_legit": avg_score_legit,
+        "avg_score_fraud": avg_score_fraud,
+        "separation": avg_score_fraud - avg_score_legit,
         "accuracy": (tp + tn) / len(results) if results else 0.0,
         "precision": precision,
         "recall": recall,
@@ -142,7 +169,10 @@ def compare(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "fpr": fm["fpr"] - bm["fpr"],
             "f1": fm["f1"] - bm["f1"],
             "false_positives_removed": bm["fp"] - fm["fp"],
+            "blocks_removed": bm["blocked_legit"] - fm["blocked_legit"],
             "fraud_missed_added": fm["fn"] - bm["fn"],
+            "avg_score_legit": fm["avg_score_legit"] - bm["avg_score_legit"],
+            "separation": fm["separation"] - bm["separation"],
         },
     }
 
@@ -151,16 +181,24 @@ def format_comparison(c: dict[str, Any]) -> str:
     b, f, d = c["baseline"], c["full"], c["delta"]
     return f"""
 RULES ONLY  vs  RULES + RAG + AGENT      ({b['n']} cases)
-{'=' * 58}
-                        conventional   agentic     delta
-  Recall                    {b['recall']:6.1%}    {f['recall']:6.1%}   {d['recall']:+6.1%}
-  Precision                 {b['precision']:6.1%}    {f['precision']:6.1%}   {d['precision']:+6.1%}
-  False positive rate       {b['fpr']:6.1%}    {f['fpr']:6.1%}   {d['fpr']:+6.1%}
-  F1                        {b['f1']:6.2f}    {f['f1']:6.2f}   {d['f1']:+6.2f}
+{'=' * 62}
+                             conventional   agentic     delta
+  Recall (fraud caught)          {b['recall']:6.1%}    {f['recall']:6.1%}   {d['recall']:+6.1%}
+  Fraud cases newly missed                              {d['fraud_missed_added']:+6d}
 
-  Legitimate customers no longer wrongly flagged: {d['false_positives_removed']}
-  Fraud cases newly missed:                       {d['fraud_missed_added']}
-  Cost of the agentic run:                        ${f['total_cost_usd']:.4f}
+  HARM TO LEGITIMATE CUSTOMERS  (n={b['legit_n']})
+  Blocked outright               {b['blocked_legit']:6d}    {f['blocked_legit']:6d}   {d['blocks_removed']:+6d}
+  Given step-up challenge        {b['friction_legit']:6d}    {f['friction_legit']:6d}
+  Avg risk score assigned        {b['avg_score_legit']:6.1f}    {f['avg_score_legit']:6.1f}   {d['avg_score_legit']:+6.1f}
+
+  SEPARATION  (fraud score minus legitimate score -- higher is better)
+  Separation                     {b['separation']:6.1f}    {f['separation']:6.1f}   {d['separation']:+6.1f}
+
+  Groundedness                   {b['groundedness']:6.1%}    {f['groundedness']:6.1%}
+  Cost of the agentic run                            ${f['total_cost_usd']:.4f}
+
+  Note: a blocked legitimate customer is a churn event; a challenged one gets a
+  push notification. Reporting them separately is deliberate.
 """
 
 

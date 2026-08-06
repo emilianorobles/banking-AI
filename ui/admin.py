@@ -291,19 +291,36 @@ def _evaluation_panel() -> None:
             {"Metric": "Precision",
              "Rules only": f"{bm['precision']:.0%}", "With AI": f"{fm['precision']:.0%}",
              "Δ": f"{fm['precision'] - bm['precision']:+.0%}"},
-            {"Metric": "False positive rate",
-             "Rules only": f"{bm['fpr']:.0%}", "With AI": f"{fm['fpr']:.0%}",
-             "Δ": f"{fm['fpr'] - bm['fpr']:+.0%}"},
-            {"Metric": "Legitimate customers wrongly flagged",
-             "Rules only": bm["fp"], "With AI": fm["fp"], "Δ": fm["fp"] - bm["fp"]},
+            {"Metric": "Legitimate customers BLOCKED",
+             "Rules only": bm["blocked_legit"], "With AI": fm["blocked_legit"],
+             "Δ": fm["blocked_legit"] - bm["blocked_legit"]},
+            {"Metric": "Legitimate customers challenged",
+             "Rules only": bm["friction_legit"], "With AI": fm["friction_legit"],
+             "Δ": fm["friction_legit"] - bm["friction_legit"]},
+            {"Metric": "Avg risk score on legitimate",
+             "Rules only": f"{bm['avg_score_legit']:.1f}",
+             "With AI": f"{fm['avg_score_legit']:.1f}",
+             "Δ": f"{fm['avg_score_legit'] - bm['avg_score_legit']:+.1f}"},
+            {"Metric": "Fraud/legitimate score separation",
+             "Rules only": f"{bm['separation']:.1f}", "With AI": f"{fm['separation']:.1f}",
+             "Δ": f"{fm['separation'] - bm['separation']:+.1f}"},
         ]), use_container_width=True, hide_index=True)
-        removed = bm["fp"] - fm["fp"]
-        if removed > 0:
+
+        blocks_removed = bm["blocked_legit"] - fm["blocked_legit"]
+        sep_gain = fm["separation"] - bm["separation"]
+        if blocks_removed > 0:
             st.success(
-                f"**{removed} legitimate customer{'s' if removed != 1 else ''} would have "
-                f"been wrongly declined by a conventional rules engine** and were correctly "
-                "allowed here — because the agent retrieved a past case where an analyst "
-                "had already ruled that exact pattern legitimate."
+                f"**{blocks_removed} legitimate customer{'s' if blocks_removed != 1 else ''} "
+                "would have been declined outright by a conventional rules engine** and were "
+                "correctly allowed here — because the agent retrieved a past case where an "
+                "analyst had already ruled that exact pattern legitimate."
+            )
+        elif sep_gain > 0:
+            st.info(
+                f"Both approaches catch the same fraud, but the agent **widens the gap "
+                f"between fraud and legitimate scores by {sep_gain:.0f} points**. That "
+                "headroom is what lets you raise the auto-block threshold safely — the "
+                "rules engine alone has no margin to raise it into."
             )
         st.divider()
 
@@ -322,21 +339,32 @@ def _evaluation_panel() -> None:
     with c2:
         components.kpi("Precision", f"{m['precision']:.0%}", "of flags that were fraud")
     with c3:
-        components.kpi("False positive rate", f"{m['fpr']:.0%}",
-                       f"{m['fp']} legitimate customers flagged",
-                       "#15803d" if m["fpr"] <= 0.10 else "#b91c1c")
+        components.kpi("Legitimate customers blocked", m["blocked_legit"],
+                       f"of {m['legit_n']} — the churn metric",
+                       "#15803d" if m["blocked_legit"] == 0 else "#b91c1c")
     with c4:
         components.kpi("Groundedness", f"{m['groundedness']:.0%}",
                        "citations that resolve",
                        "#15803d" if m["groundedness"] >= 0.999 else "#b91c1c")
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
-        components.kpi("F1", f"{m['f1']:.2f}")
+        components.kpi("Given step-up challenge", m["friction_legit"],
+                       "minor friction, not a decline")
     with c2:
-        components.kpi("Avg latency", f"{m['avg_latency_ms']} ms")
+        components.kpi("Score separation", f"{m['separation']:.0f} pts",
+                       f"fraud {m['avg_score_fraud']:.0f} vs legit {m['avg_score_legit']:.0f}")
     with c3:
+        components.kpi("Avg latency", f"{m['avg_latency_ms']} ms")
+    with c4:
         components.kpi("Cost for this run", f"${m['total_cost_usd']:.4f}")
+
+    st.caption(
+        "**Blocked** and **challenged** are reported separately on purpose. Blocking a "
+        "legitimate customer is a churn event; challenging them is a push notification. "
+        "A single blended 'false positive rate' hides the difference a bank actually "
+        "cares about."
+    )
 
     st.markdown("**Confusion matrix**")
     matrix = pd.DataFrame(
