@@ -132,7 +132,8 @@ def _alert_queue(region: str) -> None:
                   f"[{alert.risk_score}] {alert.summary}")
 
         with st.expander(header, expanded=(status == "PENDING" and alert is alerts[0])):
-            components.decision_card(txn, decision)
+            # use_expander=False is required here -- we are already inside one.
+            components.decision_card(txn, decision, use_expander=False)
 
             if status != "PENDING":
                 st.info(

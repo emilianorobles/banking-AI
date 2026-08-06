@@ -71,8 +71,21 @@ def kpi(label: str, value: Any, sub: str = "", colour: str | None = None) -> Non
     )
 
 
-def decision_card(txn: Transaction, decision: Decision | dict, *, show_internals: bool = True) -> None:
-    """The single most important view in the product: why we decided what we decided."""
+def decision_card(
+    txn: Transaction,
+    decision: Decision | dict,
+    *,
+    show_internals: bool = True,
+    use_expander: bool = True,
+) -> None:
+    """The single most important view in the product: why we decided what we decided.
+
+    `use_expander=False` renders the internals inline instead of in an expander. Required
+    when this card is itself drawn inside an expander -- Streamlit raises
+    StreamlitAPIException on nested expanders, which silently kills every widget after
+    it in that container. That is exactly what happened in the alert queue: the analyst
+    approve/reject buttons never rendered.
+    """
     d = decision.to_dict() if isinstance(decision, Decision) else dict(decision)
 
     label, colour = ACTION_LABELS.get(d["action"], (d["action"], "#64748b"))
@@ -151,7 +164,11 @@ def decision_card(txn: Transaction, decision: Decision | dict, *, show_internals
             )
 
     if show_internals:
-        with st.expander("Guardrails, telemetry & audit"):
+        container = (st.expander("Guardrails, telemetry & audit") if use_expander
+                     else st.container())
+        with container:
+            if not use_expander:
+                st.markdown("**Guardrails, telemetry & audit**")
             g1, g2, g3 = st.columns(3)
             g1.markdown(f"**Grounded**  \n{'✅ yes' if d.get('groundedness_ok', True) else '❌ fabricated citation'}")
             g2.markdown(f"**DLP**  \n{'⚠️ redacted' if d.get('dlp_blocked') else '✅ clean'}")

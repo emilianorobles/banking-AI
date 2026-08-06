@@ -42,7 +42,18 @@ Browser setup:
 - [ ] `/health` returns `llm_ok: true` — check at `http://localhost:8000/health` if the API is running.
 
 **Fallback ready:** if `llm_ok` is false, restart with `DEMO_MODE=cached` and carry on.
-The recorded responses cover every scripted beat.
+Verified against a completely dead endpoint — all seven scenarios replay with identical
+citations, because both the model responses and the query embeddings are cached.
+
+```bash
+python -m core.record_demo --verify
+```
+
+> ⚠️ **One caveat in fallback mode.** The learning-loop beat (5:15) replays a response
+> recorded *before* the analyst confirmed the case, so it cites the seeded precedent
+> rather than the case you just closed. The beat still works — the fraud is caught and
+> cited — but drop the "learned forty seconds ago" line. Say "cites the matching
+> precedent" instead. Know this before you need it.
 
 ---
 
