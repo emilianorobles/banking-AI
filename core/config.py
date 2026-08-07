@@ -28,7 +28,7 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 FAISS_DIR = DATA_DIR / "faiss"
-DB_PATH = DATA_DIR / "sentinelbank.db"
+DB_PATH = DATA_DIR / "bedrock_financial.db"
 PRECEDENTS_PATH = DATA_DIR / "fraud_precedents.jsonl"
 EVAL_SET_PATH = DATA_DIR / "eval_set.jsonl"
 CUSTOMERS_PATH = DATA_DIR / "customers.json"

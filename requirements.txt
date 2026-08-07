@@ -1,4 +1,4 @@
-# SentinelBank — pinned to the 0.3.x LangChain line.
+# BedRock Financial — pinned to the 0.3.x LangChain line.
 # The organizer guides (Create-a-Chatbot_Guide.html, Creating_RAG.pdf) are 0.3-era code.
 # Mixing langchain-openai 1.x with langchain-core 0.3.x raises:
 #   ImportError: cannot import name 'ContextOverflowError' from 'langchain_core.exceptions'

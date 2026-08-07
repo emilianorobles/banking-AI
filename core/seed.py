@@ -206,7 +206,7 @@ def seed(reset: bool = False, build_index: bool = True) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Seed SentinelBank.")
+    parser = argparse.ArgumentParser(description="Seed BedRock Financial.")
     parser.add_argument("--reset", action="store_true", help="wipe all tables first")
     parser.add_argument("--no-index", action="store_true",
                         help="skip embeddings (no API key needed)")

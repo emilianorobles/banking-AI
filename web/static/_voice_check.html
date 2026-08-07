@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>SentinelBank — voice diagnostics</title>
+<title>BedRock Financial — voice diagnostics</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <!--
   Why this page exists
@@ -530,7 +530,7 @@
     verdict({ engine: engine, net: net, sr: sr, retried: retried });
     document.getElementById("verdict").classList.remove("hidden");
 
-    const report = ["SentinelBank voice diagnostics", new Date().toISOString(),
+    const report = ["BedRock Financial voice diagnostics", new Date().toISOString(),
                     "origin: " + location.origin, "ua: " + navigator.userAgent, ""]
       .concat(results.map(r => "[" + r.tone.toUpperCase() + "] " + r.title + " — " + r.detail))
       .join("\n");

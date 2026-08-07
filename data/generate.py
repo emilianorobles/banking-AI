@@ -1,4 +1,4 @@
-"""Synthetic data generation for SentinelBank.
+"""Synthetic data generation for BedRock Financial.
 
 Everything here is fabricated. No real customer data, no real card numbers -- the PANs
 are Luhn-valid so the PII detector has something authentic to catch, but they are drawn

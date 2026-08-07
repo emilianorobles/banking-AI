@@ -1,4 +1,4 @@
-# CLAUDE.md — SentinelBank
+# CLAUDE.md — BedRock Financial
 
 > **Read this first.** This file is the single source of truth for this project. If you are a
 > fresh Claude Code / Cline session on any machine, everything you need is here plus
@@ -8,7 +8,7 @@
 
 ## What we are building
 
-**SentinelBank** — an AI-powered banking customer query resolution and fraud alert system, for the
+**BedRock Financial** — an AI-powered banking customer query resolution and fraud alert system, for the
 **TCS AI Friday Season 2 Regional Finale**. Built in one day (Thursday), presented Friday in 10 minutes.
 
 The spec is `Use Case.pdf`:
@@ -136,6 +136,24 @@ That single habit is what makes independently-generated code fit together.
 - IDs: `TXN-xxxxxx`, `CASE-xxxx`, `ALERT-xxxx`, `CUST-xxxx`.
 - Timestamps: ISO 8601 strings in UTC.
 - `DEMO_MODE=cached` replays recorded LLM responses so the demo survives an API outage.
+
+### The `SB` prefix is the old name. Leave it alone.
+
+The product was called **SentinelBank** until the rename to BedRock Financial. Every
+user-visible trace of that is gone, but the internal identifier family it left behind is
+deliberately **not** renamed: `SBCharts`, `SB`, `SBChat`, `SBAccount`, `SBVoice`,
+`SB_CURRENCY`, the `sb_health` template global, and the `--sb-*` / `.sb-*` tokens in the
+retired `ui/` layer. About 250 occurrences, none of them visible to a user or a judge.
+
+Two reasons, and the second is the one that bites:
+
+- It is a large mechanical diff across JS, Jinja and CSS for zero observable gain.
+- `sb.theme`, `sb.maskBalance` and `sb.voiceOnDevice` are **localStorage keys**. Renaming
+  them does not migrate anything — it orphans the stored value, so every user silently
+  reverts to OS theme and an unmasked balance. Same class of mistake as bug 12: a key that
+  moves is a key that misses.
+
+A future session will read `SBCharts` and want to tidy it. That is what this note is for.
 
 Run things with:
 ```bash

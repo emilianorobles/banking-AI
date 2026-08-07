@@ -1,4 +1,4 @@
-"""SentinelBank Flask application factory.
+"""BedRock Financial Flask application factory.
 
 The entire UI. All business logic stays in `core/` -- these modules only route, render
 and serialise. That boundary is why this migration was possible at all: swapping the
@@ -21,7 +21,7 @@ def create_app() -> Flask:
 
     # A demo-stable key so sessions survive a reload during rehearsal. Overridable for
     # anything resembling a real deployment.
-    app.secret_key = os.getenv("SENTINELBANK_SECRET_KEY") or "sentinelbank-demo-" + "0" * 16
+    app.secret_key = os.getenv("BEDROCK_FINANCIAL_SECRET_KEY") or "bedrock-financial-demo-" + "0" * 16
     app.permanent_session_lifetime = timedelta(hours=8)
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,

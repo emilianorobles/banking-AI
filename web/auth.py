@@ -19,7 +19,7 @@ from flask import flash, g, redirect, request, session, url_for
 
 from core import db
 
-SALT = "sentinelbank-demo"
+SALT = "bedrock-financial-demo"
 
 DEMO_USERS: dict[str, dict[str, Any]] = {
     "customer": {"password": "demo", "role": "customer", "label": "Customer",

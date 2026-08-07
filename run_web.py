@@ -1,4 +1,4 @@
-"""Run the SentinelBank web app.
+"""Run the BedRock Financial web app.
 
     python run_web.py                 # http://127.0.0.1:5000
     python run_web.py --port 8080
@@ -18,7 +18,7 @@ app = create_app()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the SentinelBank web app.")
+    parser = argparse.ArgumentParser(description="Run the BedRock Financial web app.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--debug", action="store_true",
@@ -29,7 +29,7 @@ def main() -> None:
     # ASCII only. The default Windows console is cp1252 and a stray arrow in this banner
     # crashes the launch before Flask ever binds -- which is exactly the machine this runs
     # on during the demo.
-    print(f"\n  SentinelBank -> http://{args.host}:{args.port}\n"
+    print(f"\n  BedRock Financial -> http://{args.host}:{args.port}\n"
           f"  sign in with  customer / analyst / admin   (password: demo)\n")
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)
 

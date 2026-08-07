@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BedRock Financial — Presentation (Light)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root{
+    --ink:#1c2140;
+    --ink-soft:#454b6b;
+    --muted:#767c99;
+    --paper-0:#fbf9f4;
+    --paper-1:#eef1ff;
+    --card:#ffffff;
+    --indigo:#4f46e5;
+    --coral:#fb6f92;
+    --amber:#f59e0b;
+    --emerald:#10b981;
+    --sky:#0ea5e9;
+    --violet:#8b5cf6;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; width:100vw; height:100vh; overflow:hidden;
+    background:var(--paper-0);
+    font-family:'Inter',sans-serif;
+    color:var(--ink);
+    font-size:18px;
+  }
+  .heading{ font-family:'Sora',sans-serif; }
+  .mono{ font-family:'JetBrains Mono', monospace; }
+
+  /* Ambient light background */
+  .bg-glow{
+    position:fixed; inset:0; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(55vw 55vw at 6% 8%, rgba(79,70,229,0.10), transparent 60%),
+      radial-gradient(50vw 50vw at 96% 12%, rgba(251,111,146,0.12), transparent 60%),
+      radial-gradient(60vw 60vw at 50% 108%, rgba(16,185,129,0.10), transparent 60%),
+      radial-gradient(45vw 45vw at 80% 85%, rgba(14,165,233,0.10), transparent 60%),
+      linear-gradient(180deg, var(--paper-0), var(--paper-1) 60%, var(--paper-0));
+  }
+  .grid-overlay{
+    position:fixed; inset:0; z-index:0; pointer-events:none; opacity:0.5;
+    background-image:
+      linear-gradient(rgba(28,33,64,0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(28,33,64,0.035) 1px, transparent 1px);
+    background-size:46px 46px;
+    mask-image: radial-gradient(circle at 50% 35%, black 0%, transparent 78%);
+  }
+
+  .deck{ position:relative; z-index:1; width:100vw; height:100vh; }
+
+  .slide{
+    position:absolute; inset:0;
+    width:100vw; height:100vh;
+    display:flex; flex-direction:column; justify-content:center;
+    padding:5vh 6.5vw 10vh 6.5vw;
+    opacity:0; visibility:hidden;
+    transform:translateY(30px) scale(0.985);
+    transition:opacity .55s cubic-bezier(.22,.8,.28,1), transform .6s cubic-bezier(.22,.8,.28,1), visibility 0s linear .55s;
+    pointer-events:none;
+  }
+  .slide.active{
+    opacity:1; visibility:visible; transform:translateY(0) scale(1);
+    pointer-events:auto;
+    transition:opacity .6s cubic-bezier(.22,.8,.28,1), transform .6s cubic-bezier(.22,.8,.28,1), visibility 0s;
+  }
+  .slide.exit-left{ transform:translateY(-20px) scale(0.985); }
+
+  .eyebrow{
+    display:inline-flex; align-items:center; gap:.6rem;
+    font-family:'JetBrains Mono',monospace;
+    font-size:.9rem; letter-spacing:.18em; text-transform:uppercase;
+    color:var(--indigo); font-weight:600;
+    padding:.5rem 1.1rem;
+    border:1.5px solid rgba(79,70,229,0.3);
+    border-radius:999px;
+    background:rgba(79,70,229,0.07);
+    width:fit-content;
+  }
+  .eyebrow .dot{ width:7px; height:7px; border-radius:50%; background:var(--indigo); box-shadow:0 0 10px var(--indigo); }
+
+  .grad-text{
+    background:linear-gradient(90deg,var(--indigo),var(--coral) 55%,var(--amber));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+
+  /* Bento tile */
+  .tile{
+    position:relative;
+    background:rgba(255,255,255,0.82);
+    border:1.5px solid rgba(28,33,64,0.08);
+    backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);
+    border-radius:1.6rem;
+    box-shadow:0 4px 18px rgba(28,33,64,0.06);
+    transition:transform .35s cubic-bezier(.22,.8,.28,1), box-shadow .35s ease, border-color .35s ease;
+    overflow:hidden;
+  }
+  .tile::before{
+    content:''; position:absolute; top:0; left:0; right:0; height:5px;
+    background:var(--accent, var(--indigo));
+  }
+  .tile:hover{
+    transform:translateY(-6px);
+    box-shadow:0 20px 44px rgba(28,33,64,0.14);
+    border-color:rgba(28,33,64,0.14);
+  }
+  .icon-badge{
+    width:3.4rem; height:3.4rem; border-radius:1.1rem;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--accent, var(--indigo));
+    box-shadow:0 8px 18px color-mix(in srgb, var(--accent, var(--indigo)) 45%, transparent);
+    color:#fff;
+    flex-shrink:0;
+  }
+  .icon-badge svg{ width:1.7rem; height:1.7rem; }
+
+  .slide-num{
+    position:absolute; top:2.2rem; right:3vw;
+    font-family:'JetBrains Mono',monospace; font-size:.85rem; color:var(--muted);
+    letter-spacing:.1em;
+  }
+  .kicker-line{
+    position:absolute; left:6.5vw; top:2.3rem;
+    font-family:'JetBrains Mono',monospace; font-size:.85rem; color:var(--muted);
+    letter-spacing:.14em; text-transform:uppercase; font-weight:600;
+  }
+
+  /* Nav buttons */
+  .navbtn{
+    display:flex; align-items:center; gap:.5rem;
+    padding:.85rem 1.6rem;
+    border-radius:999px;
+    background:rgba(255,255,255,0.85);
+    border:1.5px solid rgba(28,33,64,0.14);
+    backdrop-filter:blur(14px);
+    color:var(--ink);
+    font-size:1rem; font-weight:600;
+    cursor:pointer;
+    transition:all .25s ease;
+    user-select:none;
+    box-shadow:0 4px 14px rgba(28,33,64,0.06);
+  }
+  .navbtn:hover:not(:disabled){
+    border-color:var(--indigo);
+    color:var(--indigo);
+    box-shadow:0 0 0 3px rgba(79,70,229,0.14), 0 10px 24px rgba(79,70,229,0.18);
+    transform:translateY(-2px);
+  }
+  .navbtn:disabled{ opacity:.35; cursor:not-allowed; }
+
+  .progress-dot{
+    width:9px; height:9px; border-radius:50%;
+    background:rgba(28,33,64,0.16);
+    transition:all .35s ease;
+    cursor:pointer;
+  }
+  .progress-dot.active{
+    background:var(--indigo);
+    box-shadow:0 0 0 4px rgba(79,70,229,0.18);
+    width:26px; border-radius:6px;
+  }
+  .progress-dot:hover{ background:rgba(28,33,64,0.35); }
+
+  .progress-bar-track{
+    position:fixed; top:0; left:0; height:4px; width:100%;
+    background:rgba(28,33,64,0.06); z-index:50;
+  }
+  .progress-bar-fill{
+    height:100%;
+    background:linear-gradient(90deg,var(--indigo),var(--violet),var(--coral),var(--amber));
+    transition:width .5s cubic-bezier(.22,.8,.28,1);
+  }
+
+  /* code block - light editor theme */
+  .codebox{
+    background:#ffffff;
+    border:1.5px solid rgba(28,33,64,0.1);
+    border-radius:1.2rem;
+    overflow:hidden;
+    box-shadow:0 20px 50px rgba(28,33,64,0.1);
+  }
+  .codebox-head{
+    display:flex; align-items:center; gap:.5rem;
+    padding:.8rem 1.2rem;
+    background:#f4f5fb;
+    border-bottom:1.5px solid rgba(28,33,64,0.08);
+  }
+  .dotb{ width:11px; height:11px; border-radius:50%; }
+  .codebox pre{
+    margin:0; padding:1.3rem 1.6rem; font-size:.92rem; line-height:1.75;
+    overflow:auto; max-height:100%;
+  }
+  .tok-kw{ color:#a626a4; font-weight:600; }
+  .tok-str{ color:#0184bc; }
+  .tok-com{ color:#8a92ad; font-style:italic; }
+  .tok-fn{ color:#4078f2; }
+  .tok-num{ color:#d75f00; }
+  .tok-const{ color:#c18401; }
+
+  .stat-num{
+    font-family:'Sora',sans-serif; font-weight:800;
+    background:linear-gradient(90deg,var(--indigo),var(--coral));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+
+  .pill{
+    font-family:'JetBrains Mono',monospace; font-size:.8rem; font-weight:600;
+    padding:.35rem .8rem; border-radius:.55rem;
+    border:1.5px solid rgba(28,33,64,0.14);
+    background:#fff;
+    color:var(--ink-soft);
+  }
+
+  ::-webkit-scrollbar{ width:9px; height:9px; }
+  ::-webkit-scrollbar-thumb{ background:rgba(28,33,64,0.15); border-radius:8px; }
+
+  @keyframes floaty{ 0%,100%{ transform:translateY(0);} 50%{ transform:translateY(-10px);} }
+  .float{ animation:floaty 5s ease-in-out infinite; }
+
+  .flow-arrow{ color:var(--muted); font-family:'JetBrains Mono',monospace; font-size:1.6rem; }
+</style>
+</head>
+<body>
+
+<!-- Icon sprite sheet -->
+<svg style="display:none">
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5.25 3.5 9.5 8 11 4.5-1.5 8-5.75 8-11V5l-8-3Z"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+  <symbol id="i-database" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></symbol>
+  <symbol id="i-bar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
+  <symbol id="i-trend" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+  <symbol id="i-zap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5Z"/></symbol>
+  <symbol id="i-branch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></symbol>
+</svg>
+
+<div class="bg-glow"></div>
+<div class="grid-overlay"></div>
+<div class="progress-bar-track"><div class="progress-bar-fill" id="progressFill" style="width:12.5%"></div></div>
+
+<div class="deck" id="deck">
+
+  <!-- SLIDE 1 : TITLE -->
+  <section class="slide active" data-index="0">
+    <div class="h-full w-full flex flex-col items-start justify-center gap-9">
+      <div class="eyebrow"><span class="dot"></span> TCS AI FRIDAY SEASON 2 — REGIONAL FINALE</div>
+      <div>
+        <h1 class="heading text-8xl md:text-9xl font-extrabold tracking-tight leading-none grad-text">BedRock Financial</h1>
+        <p class="mt-8 text-3xl md:text-4xl font-medium text-[var(--ink-soft)] max-w-4xl">
+          Fraud gets stopped in milliseconds. <span class="text-[var(--muted)]">Good customers never feel it.</span>
+        </p>
+      </div>
+      <div class="flex items-center gap-5 mt-4 flex-wrap">
+        <div class="tile px-6 py-4 flex items-center gap-4" style="--accent:var(--indigo)">
+          <div class="icon-badge" style="--accent:var(--indigo)"><svg><use href="#i-shield"/></svg></div>
+          <div>
+            <div class="text-lg font-bold heading">Team BedRock Financial</div>
+            <div class="text-base text-[var(--muted)] mono">Multi-agent fraud &amp; query resolution platform</div>
+          </div>
+        </div>
+        <div class="pill">rules-first</div>
+        <div class="pill">RAG-grounded</div>
+        <div class="pill">audit-everything</div>
+      </div>
+    </div>
+    <div class="absolute bottom-10 right-10 text-base text-[var(--muted)] mono float">↓ press → to begin</div>
+  </section>
+
+  <!-- SLIDE 2 : PROBLEM -->
+  <section class="slide" data-index="1">
+    <div class="kicker-line">01 · The Problem</div>
+    <div class="h-full w-full flex flex-col justify-center gap-10 max-w-6xl">
+      <h2 class="heading text-6xl font-bold leading-tight">Banks are stuck choosing between <span class="grad-text">safe</span> and <span class="grad-text">fast</span>.</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="tile p-7 flex gap-5" style="--accent:var(--coral)">
+          <div class="icon-badge" style="--accent:var(--coral)"><svg><use href="#i-clock"/></svg></div>
+          <div>
+            <div class="font-bold text-xl heading mb-1.5">Every transaction, one slow lane</div>
+            <p class="text-lg text-[var(--muted)]">Sending everything through a human analyst — or a model — doesn't scale, and doesn't survive a live outage.</p>
+          </div>
+        </div>
+        <div class="tile p-7 flex gap-5" style="--accent:var(--amber)">
+          <div class="icon-badge" style="--accent:var(--amber)"><svg><use href="#i-alert"/></svg></div>
+          <div>
+            <div class="font-bold text-xl heading mb-1.5">False positives punish good customers</div>
+            <p class="text-lg text-[var(--muted)]">Aggressive rules block legitimate spend abroad, on trips, at odd hours — eroding trust exactly when it matters most.</p>
+          </div>
+        </div>
+        <div class="tile p-7 flex gap-5" style="--accent:var(--sky)">
+          <div class="icon-badge" style="--accent:var(--sky)"><svg><use href="#i-chat"/></svg></div>
+          <div>
+            <div class="font-bold text-xl heading mb-1.5">Queries scattered, unrouted</div>
+            <p class="text-lg text-[var(--muted)]">Balance checks, disputes, fraud reports and travel flags all land in the same queue with no triage.</p>
+          </div>
+        </div>
+        <div class="tile p-7 flex gap-5" style="--accent:var(--violet)">
+          <div class="icon-badge" style="--accent:var(--violet)"><svg><use href="#i-search"/></svg></div>
+          <div>
+            <div class="font-bold text-xl heading mb-1.5">Decisions nobody can explain</div>
+            <p class="text-lg text-[var(--muted)]">"The model flagged it" isn't good enough for a regulator, analyst, or customer — there's no citation, no audit trail.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SLIDE 3 : SOLUTION -->
+  <section class="slide" data-index="2">
+    <div class="kicker-line">02 · The Solution</div>
+    <div class="h-full w-full flex flex-col justify-center gap-9 max-w-6xl">
+      <h2 class="heading text-6xl font-bold leading-tight">A layered pipeline that calls the LLM <span class="grad-text">only when it earns its keep.</span></h2>
+      <p class="text-[var(--muted)] text-2xl max-w-4xl">BedRock Financial routes every transaction through deterministic rules first, escalates the genuinely ambiguous ~4% to a RAG-grounded fraud analyst agent, and gives customers &amp; analysts a real-time dashboard for everything in between.</p>
+      <div class="flex flex-wrap items-stretch gap-4 mt-1">
+        <div class="tile px-6 py-6 flex-1 min-w-[190px]" style="--accent:var(--indigo)">
+          <div class="icon-badge mb-3" style="--accent:var(--indigo)"><svg><use href="#i-lock"/></svg></div>
+          <div class="text-sm mono text-[var(--indigo)] mb-1 font-bold">STEP 1–3</div>
+          <div class="font-bold text-lg heading">Tokenize + Rules + Travel</div>
+          <div class="text-base text-[var(--muted)] mt-1">10 deterministic rules, PII never leaves the vault</div>
+        </div>
+        <div class="flow-arrow flex items-center">→</div>
+        <div class="tile px-6 py-6 flex-1 min-w-[190px]" style="--accent:var(--sky)">
+          <div class="icon-badge mb-3" style="--accent:var(--sky)"><svg><use href="#i-zap"/></svg></div>
+          <div class="text-sm mono text-[var(--sky)] mb-1 font-bold">STEP 4–5</div>
+          <div class="font-bold text-lg heading">Cheap-path exit</div>
+          <div class="text-base text-[var(--muted)] mt-1">Score &lt;30 or &gt;90 decides with zero model calls</div>
+        </div>
+        <div class="flow-arrow flex items-center">→</div>
+        <div class="tile px-6 py-6 flex-1 min-w-[190px]" style="--accent:var(--coral)">
+          <div class="icon-badge mb-3" style="--accent:var(--coral)"><svg><use href="#i-search"/></svg></div>
+          <div class="text-sm mono text-[var(--coral)] mb-1 font-bold">STEP 6–7</div>
+          <div class="font-bold text-lg heading">RAG + Fraud Analyst</div>
+          <div class="text-base text-[var(--muted)] mt-1">Balanced precedent retrieval, JSON verdict + citations</div>
+        </div>
+        <div class="flow-arrow flex items-center">→</div>
+        <div class="tile px-6 py-6 flex-1 min-w-[190px]" style="--accent:var(--emerald)">
+          <div class="icon-badge mb-3" style="--accent:var(--emerald)"><svg><use href="#i-check"/></svg></div>
+          <div class="text-sm mono text-[var(--emerald)] mb-1 font-bold">STEP 8–9</div>
+          <div class="font-bold text-lg heading">Guardrails + Route</div>
+          <div class="text-base text-[var(--muted)] mt-1">ALLOW / CHALLENGE / FREEZE — human-in-the-loop</div>
+        </div>
+      </div>
+      <p class="text-lg text-[var(--muted)] mono">★ learning loop — an analyst resolving an alert embeds a new precedent into FAISS, closing the loop for next time.</p>
+    </div>
+  </section>
+
+  <!-- SLIDE 4 : FEATURES -->
+  <section class="slide" data-index="3">
+    <div class="kicker-line">03 · Core Features</div>
+    <div class="h-full w-full flex flex-col justify-center gap-7 max-w-6xl">
+      <h2 class="heading text-6xl font-bold leading-tight">Built to be <span class="grad-text">judged</span>, not just demoed.</h2>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <div class="tile p-6" style="--accent:var(--indigo)">
+          <div class="icon-badge mb-3" style="--accent:var(--indigo)"><svg><use href="#i-users"/></svg></div>
+          <div class="font-bold text-xl heading mb-1.5">Multi-agent routing</div>
+          <p class="text-base text-[var(--muted)]">customer_agent classifies intent (balance / dispute / fraud / travel / card control) and drives a bounded tool-calling loop.</p>
+        </div>
+        <div class="tile p-6" style="--accent:var(--coral)">
+          <div class="icon-badge mb-3" style="--accent:var(--coral)"><svg><use href="#i-shield"/></svg></div>
+          <div class="font-bold text-xl heading mb-1.5">Real-time fraud scoring</div>
+          <p class="text-base text-[var(--muted)]">10 rules + impossible-travel + velocity + card-testing detection, scored in ~9ms on the cheap path.</p>
+        </div>
+        <div class="tile p-6" style="--accent:var(--sky)">
+          <div class="icon-badge mb-3" style="--accent:var(--sky)"><svg><use href="#i-search"/></svg></div>
+          <div class="font-bold text-xl heading mb-1.5">Balanced RAG retrieval</div>
+          <p class="text-base text-[var(--muted)]">search_balanced() pulls fraud <em>and</em> false-positive precedents so the agent can exonerate, not just accuse.</p>
+        </div>
+        <div class="tile p-6" style="--accent:var(--violet)">
+          <div class="icon-badge mb-3" style="--accent:var(--violet)"><svg><use href="#i-lock"/></svg></div>
+          <div class="font-bold text-xl heading mb-1.5">PII tokenization vault</div>
+          <p class="text-base text-[var(--muted)]">Card numbers become <span class="mono">&lt;PAN_7f3a&gt;</span> before the LLM ever sees them — reasoning without exposure.</p>
+        </div>
+        <div class="tile p-6" style="--accent:var(--amber)">
+          <div class="icon-badge mb-3" style="--accent:var(--amber)"><svg><use href="#i-bar"/></svg></div>
+          <div class="font-bold text-xl heading mb-1.5">Supervisor dashboard</div>
+          <p class="text-base text-[var(--muted)]">Clickable drill-downs on every metric via one generic <span class="mono">/api/drill/&lt;kind&gt;/&lt;key&gt;</span> endpoint.</p>
+        </div>
+        <div class="tile p-6" style="--accent:var(--emerald)">
+          <div class="icon-badge mb-3" style="--accent:var(--emerald)"><svg><use href="#i-refresh"/></svg></div>
+          <div class="font-bold text-xl heading mb-1.5">Self-improving learning loop</div>
+          <p class="text-base text-[var(--muted)]">Resolved alerts get embedded back into FAISS — the next similar case cites the one just closed.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SLIDE 5 : ARCHITECTURE -->
+  <section class="slide" data-index="4">
+    <div class="kicker-line">04 · Architecture &amp; Tech Stack</div>
+    <div class="h-full w-full flex flex-col justify-center gap-7 max-w-6xl">
+      <h2 class="heading text-6xl font-bold leading-tight">Explicit orchestration. <span class="grad-text">No black boxes.</span></h2>
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-5">
+        <div class="tile p-6" style="--accent:var(--indigo)">
+          <div class="icon-badge mb-3" style="--accent:var(--indigo)"><svg><use href="#i-monitor"/></svg></div>
+          <div class="pill mb-2">FRONTEND</div>
+          <div class="font-bold text-lg heading mb-2">Flask + hand-rolled HTML/CSS/JS</div>
+          <ul class="text-base text-[var(--muted)] space-y-1 mono">
+            <li>web/static/css/glass.css</li>
+            <li>web/static/js/charts.js</li>
+            <li>hand-drawn SVG, no CDN</li>
+          </ul>
+        </div>
+        <div class="tile p-6" style="--accent:var(--sky)">
+          <div class="icon-badge mb-3" style="--accent:var(--sky)"><svg><use href="#i-server"/></svg></div>
+          <div class="pill mb-2">BACKEND</div>
+          <div class="font-bold text-lg heading mb-2">Python core/ + FastAPI ingestion</div>
+          <ul class="text-base text-[var(--muted)] space-y-1 mono">
+            <li>core/pipeline.py</li>
+            <li>api/main.py (FastAPI)</li>
+            <li>8 Flask blueprints</li>
+          </ul>
+        </div>
+        <div class="tile p-6" style="--accent:var(--coral)">
+          <div class="icon-badge mb-3" style="--accent:var(--coral)"><svg><use href="#i-cpu"/></svg></div>
+          <div class="pill mb-2">AI / RAG</div>
+          <div class="font-bold text-lg heading mb-2">LangChain 0.3.x + Azure GPT-4.1</div>
+          <ul class="text-base text-[var(--muted)] space-y-1 mono">
+            <li>core/agents/fraud_analyst.py</li>
+            <li>core/rag.py (FAISS)</li>
+            <li>text-embedding-3-large</li>
+          </ul>
+        </div>
+        <div class="tile p-6" style="--accent:var(--emerald)">
+          <div class="icon-badge mb-3" style="--accent:var(--emerald)"><svg><use href="#i-database"/></svg></div>
+          <div class="pill mb-2">DATA</div>
+          <div class="font-bold text-lg heading mb-2">SQLite (WAL) + FAISS index</div>
+          <ul class="text-base text-[var(--muted)] space-y-1 mono">
+            <li>core/db.py — 10 tables</li>
+            <li>data/faiss/</li>
+            <li>core/contracts.py (frozen)</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tile p-6 flex gap-4 items-start" style="--accent:var(--violet)">
+        <div class="icon-badge shrink-0" style="--accent:var(--violet)"><svg><use href="#i-branch"/></svg></div>
+        <div class="text-lg">
+          <span class="text-[var(--indigo)] font-bold heading">Why not LangGraph?</span>
+          <span class="text-[var(--ink-soft)]"> — this is a regulated domain. Explicit Python orchestration in <span class="mono">core/pipeline.py</span> gives a traceable, auditable, deterministic control flow, and every decision, tool call and guardrail trip writes to <span class="mono">audit_log</span>.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SLIDE 6 : CODE -->
+  <section class="slide" data-index="5">
+    <div class="kicker-line">05 · Under the Hood</div>
+    <div class="h-full w-full flex flex-col justify-center gap-6 max-w-6xl mx-auto">
+      <h2 class="heading text-5xl font-bold leading-tight">The blend that stops the model from <span class="grad-text">piling on.</span></h2>
+      <p class="text-[var(--muted)] text-xl max-w-4xl -mt-1">Measured on the eval harness: a symmetric blend left recall at 100% but pushed the average risk score on <em>legitimate</em> customers from 19.1 → 24.9. <span class="mono text-base">core/pipeline.py:80-116</span></p>
+      <div class="codebox">
+        <div class="codebox-head">
+          <span class="dotb" style="background:#ff5f56"></span>
+          <span class="dotb" style="background:#ffbd2e"></span>
+          <span class="dotb" style="background:#27c93f"></span>
+          <span class="ml-3 text-base text-[var(--muted)] mono">core/pipeline.py</span>
+        </div>
+        <pre class="mono"><code><span class="tok-com"># Asymmetric blend weights. See _blend() for the reasoning.</span>
+<span class="tok-const">LLM_WEIGHT_EXCULPATORY</span> = <span class="tok-num">0.65</span>   <span class="tok-com"># model argues the transaction is SAFER than rules think</span>
+<span class="tok-const">LLM_WEIGHT_INCRIMINATING</span> = <span class="tok-num">0.25</span>  <span class="tok-com"># model argues it is MORE dangerous</span>
+
+
+<span class="tok-kw">def</span> <span class="tok-fn">_blend</span>(rule_score: <span class="tok-kw">int</span>, llm_score: <span class="tok-kw">int</span>) -&gt; <span class="tok-kw">int</span>:
+    <span class="tok-com">"""Combine the deterministic and model scores -- asymmetrically, on purpose.
+
+    The rules are already excellent at DETECTING risk (100% recall).
+    They need no help finding fraud, so an incriminating opinion from
+    the model is discounted heavily -- it can nudge, not drive.
+
+    What rules cannot do is EXONERATE. So when the model argues a
+    transaction is safer than the rules think, we listen closely.
+    """</span>
+    weight = (<span class="tok-const">LLM_WEIGHT_EXCULPATORY</span> <span class="tok-kw">if</span> llm_score &lt; rule_score
+              <span class="tok-kw">else</span> <span class="tok-const">LLM_WEIGHT_INCRIMINATING</span>)
+    blended = <span class="tok-fn">round</span>((<span class="tok-num">1</span> - weight) * rule_score + weight * llm_score)
+
+    <span class="tok-com"># Physics beats opinion: a very high rule score still sets a floor.</span>
+    <span class="tok-kw">if</span> rule_score &gt;= <span class="tok-num">90</span>:
+        blended = <span class="tok-fn">max</span>(blended, rule_score)
+    <span class="tok-kw">return</span> <span class="tok-fn">max</span>(<span class="tok-num">0</span>, <span class="tok-fn">min</span>(<span class="tok-num">100</span>, <span class="tok-kw">int</span>(blended)))</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- SLIDE 7 : IMPACT -->
+  <section class="slide" data-index="6">
+    <div class="kicker-line">06 · Live Demo / Impact</div>
+    <div class="h-full w-full flex flex-col justify-center gap-7 max-w-6xl">
+      <h2 class="heading text-6xl font-bold leading-tight">Measured. Not <span class="grad-text">marketed.</span></h2>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-5">
+        <div class="tile p-6 text-center" style="--accent:var(--indigo)">
+          <div class="icon-badge mx-auto mb-3" style="--accent:var(--indigo)"><svg><use href="#i-zap"/></svg></div>
+          <div class="stat-num text-5xl">96%</div>
+          <div class="text-base text-[var(--muted)] mt-2">transactions scored with zero LLM calls</div>
+        </div>
+        <div class="tile p-6 text-center" style="--accent:var(--emerald)">
+          <div class="icon-badge mx-auto mb-3" style="--accent:var(--emerald)"><svg><use href="#i-trend"/></svg></div>
+          <div class="stat-num text-5xl">$0.61</div>
+          <div class="text-base text-[var(--muted)] mt-2">vs. $15.50 projected cost — all-model baseline</div>
+        </div>
+        <div class="tile p-6 text-center" style="--accent:var(--coral)">
+          <div class="icon-badge mx-auto mb-3" style="--accent:var(--coral)"><svg><use href="#i-shield"/></svg></div>
+          <div class="stat-num text-5xl">100%</div>
+          <div class="text-base text-[var(--muted)] mt-2">fraud recall — nothing legitimate ever blocked</div>
+        </div>
+        <div class="tile p-6 text-center" style="--accent:var(--amber)">
+          <div class="icon-badge mx-auto mb-3" style="--accent:var(--amber)"><svg><use href="#i-alert"/></svg></div>
+          <div class="stat-num text-5xl">43→25%</div>
+          <div class="text-base text-[var(--muted)] mt-2">false-positive rate, with the agent in the loop</div>
+        </div>
+        <div class="tile p-6 text-center" style="--accent:var(--sky)">
+          <div class="icon-badge mx-auto mb-3" style="--accent:var(--sky)"><svg><use href="#i-bar"/></svg></div>
+          <div class="stat-num text-5xl">45→59%</div>
+          <div class="text-base text-[var(--muted)] mt-2">precision improvement, same recall</div>
+        </div>
+        <div class="tile p-6 text-center" style="--accent:var(--violet)">
+          <div class="icon-badge mx-auto mb-3" style="--accent:var(--violet)"><svg><use href="#i-check"/></svg></div>
+          <div class="stat-num text-5xl">100%</div>
+          <div class="text-base text-[var(--muted)] mt-2">groundedness — zero fabricated citations</div>
+        </div>
+        <div class="tile p-6 text-center" style="--accent:var(--indigo)">
+          <div class="icon-badge mx-auto mb-3" style="--accent:var(--indigo)"><svg><use href="#i-clock"/></svg></div>
+          <div class="stat-num text-5xl">~9ms</div>
+          <div class="text-base text-[var(--muted)] mt-2">p95 latency on the rules-only cheap path</div>
+        </div>
+        <div class="tile p-6 text-center" style="--accent:var(--coral)">
+          <div class="icon-badge mx-auto mb-3" style="--accent:var(--coral)"><svg><use href="#i-users"/></svg></div>
+          <div class="stat-num text-5xl">5</div>
+          <div class="text-base text-[var(--muted)] mt-2">real customers un-blocked per 38 cases, $0.17 spent</div>
+        </div>
+      </div>
+      <p class="text-lg text-[var(--muted)] mt-1">Runs live on the Evaluation page — the A/B table (rules-only vs. agentic) builds itself in front of the judges.</p>
+    </div>
+  </section>
+
+  <!-- SLIDE 8 : CONCLUSION -->
+  <section class="slide" data-index="7">
+    <div class="kicker-line">07 · Conclusion &amp; Q&amp;A</div>
+    <div class="h-full w-full flex flex-col justify-center gap-9 max-w-6xl">
+        <h2 class="heading text-7xl font-bold leading-tight">Thank you. <span class="gradext">Questions?</span></h2>
+      <p class="text-[var(--ink-soft)] text-2xl max-w-4xl">BedRock Financial shows that fraud detection doesn't have to trade safety for speed — deterministic rules do the heavy lifting, an LLM agent earns its cost on the ambiguous 4%, and every decision is cited, auditable, and reversible.</p>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <div class="tile p-6" style="--accent:var(--indigo)">
+          <div class="icon-badge mb-3" style="--accent:var(--indigo)"><svg><use href="#i-trend"/></svg></div>
+          <div class="text-base mono text-[var(--indigo)] mb-2 font-bold">ROADMAP</div>
+          <div class="text-lg text-[var(--ink-soft)]">Expand the precedent corpus, multi-channel ingestion (UPI, wire, POS), richer analyst feedback loop.</div>
+        </div>
+        <div class="tile p-6" style="--accent:var(--violet)">
+          <div class="icon-badge mb-3" style="--accent:var(--violet)"><svg><use href="#i-lock"/></svg></div>
+          <div class="text-base mono text-[var(--violet)] mb-2 font-bold">HARDENING</div>
+          <div class="text-lg text-[var(--ink-soft)]">Production auth, rate-limited ingestion API, broader multilingual customer agent support.</div>
+        </div>
+        <div class="tile p-6" style="--accent:var(--coral)">
+          <div class="icon-badge mb-3" style="--accent:var(--coral)"><svg><use href="#i-chat"/></svg></div>
+          <div class="text-base mono text-[var(--coral)] mb-2 font-bold">THE PITCH</div>
+          <div class="text-lg text-[var(--ink-soft)]">We swapped the entire presentation layer — Streamlit → Flask — without touching a rule, an agent, or the pipeline.</div>
+        </div>
+      </div>
+      <div class="mt-1 text-[var(--muted)] mono text-lg">— Team BedRock Financial · Akaash, Emiliano, Daniel, Sairi and Anindya</div>
+    </div>
+  </section>
+
+</div>
+
+<!-- Fixed nav -->
+<div class="fixed bottom-8 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-4">
+  <div class="flex items-center gap-2.5" id="dots"></div>
+  <div class="flex items-center gap-4">
+    <button class="navbtn" id="prevBtn">← Previous</button>
+    <span class="mono text-base text-[var(--muted)] font-semibold" id="counter">01 / 08</span>
+    <button class="navbtn" id="nextBtn">Next →</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var total = slides.length;
+  var current = 0;
+
+  var dotsEl = document.getElementById('dots');
+  slides.forEach(function(_, i){
+    var d = document.createElement('div');
+    d.className = 'progress-dot' + (i === 0 ? ' active' : '');
+    d.addEventListener('click', function(){ goTo(i); });
+    dotsEl.appendChild(d);
+  });
+  var dots = Array.prototype.slice.call(dotsEl.children);
+
+  var prevBtn = document.getElementById('prevBtn');
+  var nextBtn = document.getElementById('nextBtn');
+  var counter = document.getElementById('counter');
+  var fill = document.getElementById('progressFill');
+
+  function pad(n){ return n < 10 ? '0' + n : '' + n; }
+
+  function render(){
+    slides.forEach(function(s, i){
+      s.classList.toggle('active', i === current);
+      s.classList.toggle('exit-left', i < current);
+    });
+    dots.forEach(function(d, i){ d.classList.toggle('active', i === current); });
+    counter.textContent = pad(current + 1) + ' / ' + pad(total);
+    fill.style.width = ((current + 1) / total * 100) + '%';
+    prevBtn.disabled = current === 0;
+    nextBtn.disabled = current === total - 1;
+  }
+
+  function goTo(i){
+    current = Math.max(0, Math.min(total - 1, i));
+    render();
+  }
+  function next(){ goTo(current + 1); }
+  function prev(){ goTo(current - 1); }
+
+  prevBtn.addEventListener('click', prev);
+  nextBtn.addEventListener('click', next);
+
+  window.addEventListener('keydown', function(e){
+    if (['ArrowRight','ArrowDown','PageDown',' ','Spacebar'].indexOf(e.key) !== -1){
+      e.preventDefault(); next();
+    } else if (['ArrowLeft','ArrowUp','PageUp'].indexOf(e.key) !== -1){
+      e.preventDefault(); prev();
+    } else if (e.key === 'Home'){
+      e.preventDefault(); goTo(0);
+    } else if (e.key === 'End'){
+      e.preventDefault(); goTo(total - 1);
+    }
+  });
+
+  var touchStartX = null;
+  window.addEventListener('touchstart', function(e){ touchStartX = e.changedTouches[0].clientX; });
+  window.addEventListener('touchend', function(e){
+    if (touchStartX === null) return;
+    var dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 60){ dx < 0 ? next() : prev(); }
+    touchStartX = null;
+  });
+
+  render();
+})();
+</script>
+
+</body>
+</html>

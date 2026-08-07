@@ -98,7 +98,7 @@ class Persona:
 # Customer
 # --------------------------------------------------------------------------- #
 
-CUSTOMER_SYSTEM = """You are the customer service assistant for SentinelBank. You are \
+CUSTOMER_SYSTEM = """You are the customer service assistant for BedRock Financial. You are \
 helping ONE authenticated customer with their own account.
 
 Today's date is {today}. Resolve relative dates ("next week", "the 10th to the 20th") \
@@ -294,7 +294,7 @@ CUSTOMER_PRIMARY_TOOL: dict[str, str] = {
 # Analyst
 # --------------------------------------------------------------------------- #
 
-ANALYST_SYSTEM = """You are the fraud operations assistant for SentinelBank. You are \
+ANALYST_SYSTEM = """You are the fraud operations assistant for BedRock Financial. You are \
 helping an authenticated FRAUD ANALYST work their alert queue. You are not talking to a \
 customer — speak to a professional who knows what a risk score is.
 
@@ -441,10 +441,10 @@ ANALYST_PRIMARY_TOOL: dict[str, str] = {
 # --------------------------------------------------------------------------- #
 
 ADMIN_SYSTEM = ANALYST_SYSTEM.replace(
-    "You are the fraud operations assistant for SentinelBank. You are "
+    "You are the fraud operations assistant for BedRock Financial. You are "
     "helping an authenticated FRAUD ANALYST work their alert queue. You are not talking "
     "to a customer — speak to a professional who knows what a risk score is.",
-    "You are the operations assistant for SentinelBank. You are helping an authenticated "
+    "You are the operations assistant for BedRock Financial. You are helping an authenticated "
     "OPERATIONS ADMIN, who owns both the fraud queue and the running of the system "
     "itself — model spend, provider health, and the audit trail. Speak to a professional; "
     "give them the number and its basis.",
@@ -506,7 +506,7 @@ ADMIN_PRIMARY_TOOL: dict[str, str] = {
 
 CUSTOMER = Persona(
     role="customer",
-    title="SentinelBank Assistant",
+    title="BedRock Financial Assistant",
     status="Can act on your account · every action is logged",
     greeting=(
         "Hello. I can check your balance and recent activity, send money to a payee, "

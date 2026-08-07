@@ -1,4 +1,4 @@
-# SentinelBank — Architecture
+# BedRock Financial — Architecture
 
 > Companion to [DEMO_SCRIPT.md](DEMO_SCRIPT.md). Section headings map to slides.
 

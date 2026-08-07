@@ -148,7 +148,7 @@ def render_email(n: Notification) -> tuple[str, str, str]:
                  box-shadow:0 2px 14px rgba(15,23,42,.09)">
     <tr><td style="background:linear-gradient(135deg,#6366f1,#8b5cf6 45%,#06b6d4);
                    padding:22px 26px;color:#fff">
-      <div style="font-size:17px;font-weight:800;letter-spacing:-.2px">SentinelBank</div>
+      <div style="font-size:17px;font-weight:800;letter-spacing:-.2px">BedRock Financial</div>
       <div style="font-size:12px;opacity:.85;margin-top:2px">{e(banner)}</div>
     </td></tr>
     <tr><td style="padding:26px">
@@ -167,7 +167,7 @@ def render_email(n: Notification) -> tuple[str, str, str]:
     </td></tr>
     <tr><td style="padding:16px 26px;background:#f8fafc;border-top:1px solid #e2e8f0;
                    font-size:11px;color:#94a3b8;line-height:1.6">
-      If you didn't expect this, open the SentinelBank app and review your alerts.
+      If you didn't expect this, open the BedRock Financial app and review your alerts.
       We will never ask for your PIN, password or full card number by email.<br>
       Reference: {e(n.notification_id)}
     </td></tr>
@@ -177,7 +177,7 @@ def render_email(n: Notification) -> tuple[str, str, str]:
 </body></html>"""
 
     text = (
-        f"SentinelBank — {banner}\n"
+        f"BedRock Financial — {banner}\n"
         f"{'=' * 52}\n\n{n.subject}\n\n{n.body}\n"
         + (f"\n{n.detail}\n" if n.detail else "")
         + f"\nAccount holder: {name}\nCard ending: {last4}\n"
@@ -185,7 +185,7 @@ def render_email(n: Notification) -> tuple[str, str, str]:
           f"Reference: {n.notification_id}\n\n"
           "We will never ask for your PIN, password or full card number by email.\n"
     )
-    return f"[SentinelBank] {n.subject}", html, text
+    return f"[BedRock Financial] {n.subject}", html, text
 
 
 def build_message(n: Notification) -> EmailMessage:
@@ -193,11 +193,11 @@ def build_message(n: Notification) -> EmailMessage:
     subject, html, text = render_email(n)
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = os.getenv("SMTP_FROM", "alerts@sentinelbank.example")
+    msg["From"] = os.getenv("SMTP_FROM", "alerts@bedrockfinancial.example")
     msg["To"] = (customer.email if customer else f"{n.customer_id}@example.com")
     msg["Date"] = n.created_at
-    msg["X-SentinelBank-Kind"] = n.kind
-    msg["X-SentinelBank-Severity"] = n.severity
+    msg["X-BedRock-Kind"] = n.kind
+    msg["X-BedRock-Severity"] = n.severity
     msg.set_content(text)
     msg.add_alternative(html, subtype="html")
     return msg
@@ -251,7 +251,7 @@ def smtp_status() -> dict[str, Any]:
         "configured": smtp_configured(),
         "host": os.getenv("SMTP_HOST", ""),
         "port": os.getenv("SMTP_PORT", "587"),
-        "from": os.getenv("SMTP_FROM", "alerts@sentinelbank.example"),
+        "from": os.getenv("SMTP_FROM", "alerts@bedrockfinancial.example"),
     }
 
 

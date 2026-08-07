@@ -1,4 +1,4 @@
-# SentinelBank — 10-Minute Demo Script
+# BedRock Financial — 10-Minute Demo Script
 
 > **Rehearse this three times end to end.** The click order is fixed. Nothing is typed
 > live: every injection is a preset button, because a typo on stage costs forty seconds
@@ -65,7 +65,7 @@ python -m core.record_demo --verify
 > noise. And every time the system wrongly declines a good customer, that's a support
 > call and sometimes a lost customer.
 >
-> We built SentinelBank: an agentic system that resolves customer queries, catches fraud
+> We built BedRock Financial: an agentic system that resolves customer queries, catches fraud
 > with a cited reason, and — this is the part most systems get wrong — knows when to
 > leave a legitimate customer alone."
 

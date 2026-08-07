@@ -503,7 +503,7 @@ def add_payee(ctx: AgentContext, name: str = "",
     if existing:
         return {"error": f"That account is already saved as {existing['name']}."}
 
-    # An account number that belongs to another SentinelBank customer makes this an
+    # An account number that belongs to another BedRock Financial customer makes this an
     # internal transfer, which actually credits the other side.
     internal = db.customer_by_account_number(account_number)
     if internal is not None and internal.customer_id == customer_id:
@@ -661,7 +661,7 @@ def _notify_previous_contact(customer_id: str, changed: dict[str, str]) -> None:
         notifications.notify(
             customer_id, kind="contact_change", severity="warn",
             subject="Your contact details were changed",
-            body=("The email address or phone number on your SentinelBank account was "
+            body=("The email address or phone number on your BedRock Financial account was "
                   "just changed. If you did not do this, freeze your card immediately "
                   "and call us — someone may be trying to take over your account."),
             detail=", ".join(f"{k.replace('previous_', 'was ')}: {v}"

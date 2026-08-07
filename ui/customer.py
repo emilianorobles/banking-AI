@@ -48,7 +48,7 @@ def _history_key(customer_id: str) -> str:
 OPEN_KEY = "assistant_open"
 
 
-@st.dialog("SentinelBank Assistant", width="large")
+@st.dialog("BedRock Financial Assistant", width="large")
 def _assistant_dialog(customer_id: str) -> None:
     """The assistant, in its own window.
 
@@ -558,7 +558,7 @@ def _statements(customer_id, customer) -> None:
         st.download_button(
             "⬇️  Download statement (.txt)",
             data=statement,
-            file_name=f"sentinelbank-statement-{customer_id}-{date.today()}.txt",
+            file_name=f"bedrock-financial-statement-{customer_id}-{date.today()}.txt",
             mime="text/plain",
             use_container_width=True,
             type="primary",
@@ -578,7 +578,7 @@ def _statements(customer_id, customer) -> None:
             st.download_button(
                 "⬇️  Download transactions (.csv)",
                 data=pd.DataFrame(rows).to_csv(index=False),
-                file_name=f"sentinelbank-transactions-{customer_id}-{date.today()}.csv",
+                file_name=f"bedrock-financial-transactions-{customer_id}-{date.today()}.csv",
                 mime="text/csv",
                 use_container_width=True,
             )

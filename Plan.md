@@ -1,5 +1,5 @@
 # AI Friday S2 Regional Finale — 14-Hour Build Plan
-**"SentinelBank" — AI-Powered Banking Query Resolution & Fraud Alert System**
+**"BedRock Financial" — AI-Powered Banking Query Resolution & Fraud Alert System**
 
 ---
 

@@ -30,7 +30,7 @@ from core import pipeline as core_pipeline
 from core.contracts import Transaction, new_id
 
 app = FastAPI(
-    title="SentinelBank Fraud Detection API",
+    title="BedRock Financial Fraud Detection API",
     description="Real-time transaction scoring with RAG-grounded explanations.",
     version="1.0.0",
 )

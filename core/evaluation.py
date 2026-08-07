@@ -241,7 +241,7 @@ EVALUATION REPORT  ({m['n']} cases, model used on {m['llm_used']})
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run the SentinelBank evaluation harness.")
+    parser = argparse.ArgumentParser(description="Run the BedRock Financial evaluation harness.")
     parser.add_argument("--limit", type=int, default=0, help="only run the first N cases")
     parser.add_argument("--compare", action="store_true",
                         help="run rules-only vs full pipeline and report the delta")

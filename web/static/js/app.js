@@ -1,4 +1,4 @@
-/* SentinelBank front-end runtime: fetch helpers, toasts, modals, drill-downs,
+/* BedRock Financial front-end runtime: fetch helpers, toasts, modals, drill-downs,
  * balance masking, notification polling. No framework, no build step. */
 (function (global) {
   "use strict";

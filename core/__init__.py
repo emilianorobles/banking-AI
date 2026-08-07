@@ -1,4 +1,4 @@
-"""SentinelBank core package.
+"""BedRock Financial core package.
 
 Importing `core` applies the runtime environment fixes in core.config (SSL, OpenMP,
 Streamlit watcher) before anything else touches httpx or langchain.

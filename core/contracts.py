@@ -1,4 +1,4 @@
-"""Frozen data contracts for SentinelBank.
+"""Frozen data contracts for BedRock Financial.
 
 THIS FILE IS THE INTERFACE BETWEEN ALL FIVE WORKSTREAMS. Paste it into any AI coding
 session as context before asking for code. Changing anything here means telling the

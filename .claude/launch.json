@@ -2,7 +2,7 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "sentinelbank",
+      "name": "bedrock-financial",
       "runtimeExecutable": "python",
       "runtimeArgs": ["run_web.py"],
       "port": 5000

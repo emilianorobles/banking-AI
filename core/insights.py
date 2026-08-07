@@ -786,7 +786,7 @@ def build_statement(customer_id: str) -> str:
 
     lines = [
         "=" * 64,
-        "  SENTINELBANK — ACCOUNT STATEMENT",
+        "  BEDROCK FINANCIAL — ACCOUNT STATEMENT",
         f"  {customer.name}   ·   Card ending {customer.card_number[-4:]}",
         f"  Generated {_now().strftime('%d %B %Y, %H:%M UTC')}",
         "=" * 64,

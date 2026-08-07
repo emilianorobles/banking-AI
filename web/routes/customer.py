@@ -161,7 +161,7 @@ def statement_download():
     return Response(
         body, mimetype="text/plain",
         headers={"Content-Disposition":
-                 f'attachment; filename="sentinelbank-{cid}-{date.today()}.txt"'},
+                 f'attachment; filename="bedrock-financial-{cid}-{date.today()}.txt"'},
     )
 
 
@@ -389,7 +389,7 @@ def change_password():
              detail=f"Password changed via the secure form (strength {score}/100)")
     notif.notify(cid, kind="password_change", severity="warn",
                  subject="Your password was changed",
-                 body="Your SentinelBank password was just changed. If this wasn't you, "
+                 body="Your BedRock Financial password was just changed. If this wasn't you, "
                       "freeze your card immediately and call us.")
     return jsonify({"ok": True, "score": score, "verdict": verdict,
                     "message": "Password updated. We've sent you a confirmation."})

@@ -1,4 +1,4 @@
-/* SentinelBank charts — hand-drawn SVG, zero dependencies.
+/* BedRock Financial charts — hand-drawn SVG, zero dependencies.
  *
  * Deliberately not Chart.js or ECharts: the demo has to run with the wifi off, and a
  * chart library loaded from a CDN is the first thing to break.

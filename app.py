@@ -1,4 +1,4 @@
-"""SentinelBank -- Streamlit entry point.
+"""BedRock Financial -- Streamlit entry point.
 
 Run:  streamlit run app.py
 
@@ -16,7 +16,7 @@ from core import config, db
 from ui import admin, components, customer, demo_control
 
 st.set_page_config(
-    page_title="SentinelBank — AI Fraud & Query Resolution",
+    page_title="BedRock Financial — AI Fraud & Query Resolution",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -38,7 +38,7 @@ DEMO_USERS = {
     "admin":    {"password": "demo", "role": "admin",    "label": "Operations Admin"},
 }
 
-SALT = "sentinelbank-demo"
+SALT = "bedrock-financial-demo"
 
 
 def _hash(password: str) -> str:
@@ -56,7 +56,7 @@ def authenticate(username: str, password: str) -> dict | None:
 
 
 def login_screen() -> None:
-    st.markdown("# 🛡️ SentinelBank")
+    st.markdown("# 🛡️ BedRock Financial")
     st.caption("AI-powered banking query resolution and fraud alert system")
 
     left, right = st.columns([1, 1])
@@ -103,7 +103,7 @@ def main() -> None:
     role = user["role"]
 
     with st.sidebar:
-        st.markdown("## 🛡️ SentinelBank")
+        st.markdown("## 🛡️ BedRock Financial")
         st.caption(f"Signed in as **{user['label']}**")
 
         pages = ["Customer portal"]

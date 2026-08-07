@@ -1,4 +1,4 @@
-# SentinelBank — the value proposition
+# BedRock Financial — the value proposition
 
 > **What this document is for.** It is the anchor for the deck, the answer sheet for the
 > Q&A, and the place the numbers live so nobody has to remember them. The in-app
