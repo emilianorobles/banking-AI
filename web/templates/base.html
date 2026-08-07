@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}SentinelBank{% endblock %}</title>
+  {% include "partials/theme_boot.html" %}
   <link rel="stylesheet" href="{{ url_for('static', filename='css/glass.css') }}">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
   {% block head %}{% endblock %}
@@ -94,6 +95,7 @@
           </form>
         {% endif %}
 
+        <button class="eye" data-theme-toggle type="button" aria-label="Switch theme">🌙</button>
         <button class="eye" data-eye type="button" aria-label="Show balance">👁</button>
 
         <a class="btn btn-sm" href="{{ url_for('notifications.centre') }}" style="position:relative">

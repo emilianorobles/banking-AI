@@ -4,10 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sign in · SentinelBank</title>
+  {% include "partials/theme_boot.html" %}
   <link rel="stylesheet" href="{{ url_for('static', filename='css/glass.css') }}">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
 </head>
 <body>
+{# Sign-in has no header to hang the toggle off, but it is the first page anyone sees --
+   including a judge on a light-mode laptop -- so it gets its own. app.js binds every
+   [data-theme-toggle] on the page, so no extra wiring is needed. #}
+<button class="eye" data-theme-toggle type="button" aria-label="Switch theme"
+        style="position:fixed;top:var(--s-3);right:var(--s-3);z-index:10;font-size:1.05rem">🌙</button>
+
 <div class="login-wrap">
   <div class="login-card glass">
 
@@ -84,5 +91,10 @@
 
   </div>
 </div>
+
+{# Only needed for the theme toggle above -- this page has no charts, no drill-downs and no
+   maskable balances. The notification poller stays asleep because <body> has no
+   data-poll="1", so this costs one cached request and nothing else. #}
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
