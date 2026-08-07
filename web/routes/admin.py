@@ -16,7 +16,7 @@ from typing import Any
 from flask import (Blueprint, flash, jsonify, redirect, render_template,
                    request, url_for)
 
-from core import config, db, evaluation, llm, notifications as notif, rag
+from core import config, db, evaluation, llm, notifications as notif, rag, rules
 
 from .. import auth
 
@@ -143,6 +143,43 @@ def resolve(alert_id: str):
 def cost():
     return render_template("admin/cost.html", active="cost", cost=db.cost_summary(),
                            mode=config.DEMO_MODE, model=config.CHAT_MODEL)
+
+
+@bp.get("/business-case")
+def business_case():
+    """The commercial argument, computed live rather than pasted into a slide.
+
+    A slide goes stale the moment anyone reseeds; this page reads `db.cost_summary()` and
+    the decision table on every request, so the numbers a judge sees are the numbers this
+    installation actually produced. It is also clickable during the demo, which a slide
+    is not.
+
+    Where a figure comes from a measured run rather than from the live database -- the
+    A/B precision numbers -- it is labelled as such. Presenting a benchmark result as a
+    live reading would be the exact dishonesty this page exists to avoid.
+    """
+    c = db.cost_summary()
+
+    with db.connect() as conn:
+        actions = {r["action"]: r["n"] for r in conn.execute(
+            "SELECT action, COUNT(*) n FROM decisions GROUP BY action").fetchall()}
+        suppressed = conn.execute(
+            "SELECT COUNT(*) n FROM decisions WHERE suppressed_by_travel=1").fetchone()["n"]
+        injections = conn.execute(
+            "SELECT COUNT(*) n FROM decisions WHERE injection_detected=1").fetchone()["n"]
+    learned = rag.learned_case_count()
+
+    scored = sum(actions.values())
+    blocked = actions.get("FREEZE_AND_ESCALATE", 0) + actions.get("QUARANTINE", 0)
+
+    return render_template(
+        "admin/business_case.html", active="business_case",
+        cost=c, actions=actions, scored=scored, blocked=blocked,
+        challenged=actions.get("CHALLENGE", 0), allowed=actions.get("ALLOW", 0),
+        suppressed=suppressed, injections=injections,
+        learned=learned, index_size=rag.index_size(),
+        rules_count=len(rules.RULE_META), model=config.CHAT_MODEL,
+    )
 
 
 # --------------------------------------------------------------------------- #

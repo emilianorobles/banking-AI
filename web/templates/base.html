@@ -35,6 +35,7 @@
         <a href="{{ url_for('admin.overview') }}"   class="{{ 'active' if active == 'ops' }}">📈 <span>Overview</span></a>
         <a href="{{ url_for('admin.alert_queue') }}" class="{{ 'active' if active == 'queue' }}">🚨 <span>Alert queue</span></a>
         <a href="{{ url_for('admin.cost') }}"       class="{{ 'active' if active == 'cost' }}">💰 <span>Cost &amp; performance</span></a>
+        <a href="{{ url_for('admin.business_case') }}" class="{{ 'active' if active == 'business_case' }}">📊 <span>Business case</span></a>
         <a href="{{ url_for('admin.evaluation_page') }}" class="{{ 'active' if active == 'eval' }}">🧪 <span>Evaluation</span></a>
         <a href="{{ url_for('admin.knowledge') }}"  class="{{ 'active' if active == 'knowledge' }}">📚 <span>Knowledge store</span></a>
         <a href="{{ url_for('admin.audit') }}"      class="{{ 'active' if active == 'audit' }}">🔍 <span>Audit log</span></a>

@@ -215,3 +215,236 @@ Let the status steps show. Narrate them as they appear:
 4. Total failure → Backup plays the screen recording. You still present.
 
 **Record the full demo Thursday night.** It is the only insurance that always works.
+
+---
+
+# The talk track
+
+> Sentence-level narration for the Narrator, beat by beat, with the **one question most
+> likely to come at that exact moment** and its one-line answer. Read it aloud twice. The
+> point is not to memorise it — it is that you have already said each sentence once, so the
+> phrasing does not have to be invented on stage.
+>
+> Where a beat has a number, the number is in **bold**. Say numbers slowly. Judges write
+> them down, and a number said quickly sounds like a number being hidden.
+
+---
+
+### 0:00–1:00 · The problem
+
+> "Every bank runs fraud detection, and every bank has the same three costs. Fraud losses.
+> Analyst time. And the one nobody optimises: **false declines** — the good customer whose
+> card fails at a checkout. That third one is usually the biggest, because it is lost
+> revenue, a support call, and sometimes a lost customer.
+>
+> And there's a new fourth cost. Teams are now putting a language model on every
+> transaction, paying inference on volume that never needed judgement.
+>
+> We built for all four."
+
+**Likely question here:** *"Isn't false-decline reduction just loosening the rules?"*
+→ "It would be, if we'd lost recall. We didn't — **100%** either way. We removed challenges
+without missing any fraud, which is the only version of this that counts."
+
+---
+
+### 1:00–1:30 · Architecture — 30 seconds, no longer
+
+> "Nine stages, fixed order, every one traceable. Tokenise the personal data. Run twelve
+> deterministic checks. Apply travel notices. Then the important one — **stage four is a
+> gate**: if the rule score is clearly low or clearly high, that's already a decision and no
+> model is called. Only the ambiguous middle pays for inference. Retrieval, the AI analyst,
+> guardrails, routing, notification.
+>
+> No agent framework. In a regulated domain we want to point at the line that made the
+> decision."
+
+**Likely question:** *"Why not LangGraph?"*
+→ "Traceability, and one less install-time dependency. The orchestration is explicit Python
+and fits on a screen."
+
+---
+
+### 1:30–2:30 · The customer agent
+
+> "This is the customer's side. It isn't a help bot — it holds tools that move real state.
+> Watch what happens when I ask for recent activity."
+>
+> *(table + chart appear)*
+>
+> "That's a real table and a real chart, drawn locally. No chart library, no CDN — this
+> whole demo survives with the wifi off, and later I'm going to prove that.
+>
+> Now watch the other kind of request." *(freeze the card)* "It doesn't do it. It **proposes**
+> it, and waits. Anything irreversible is a proposal until a human confirms."
+
+**Likely question:** *"Does the confirmation actually do anything, or is it decoration?"*
+→ "The server executes the *stored* proposal, never what the browser sends back on the
+confirm. You can't POST past it. That's also why the voice mode won't accept a spoken 'yes' —
+a misheard word must not be able to freeze a card."
+
+---
+
+### 2:30–3:15 · The false positive you prevented
+
+> "She filed a travel notice for Spain. Here's a Spanish transaction — and it goes straight
+> through. But look at *why*." *(open the **Why?** button)*
+>
+> "'We would have flagged this, but you told us you were travelling.' Two checks fired and
+> were cancelled. This is the false decline that didn't happen — and the customer can see
+> that it didn't happen, and why."
+
+**Likely question:** *"Couldn't a fraudster just file a travel notice?"*
+→ "Filing one is an authenticated action on the account and it's audit-logged. It suppresses
+geography only — amount, velocity, card-testing and merchant-risk all still fire. It narrows
+the search, it doesn't switch anything off."
+
+---
+
+### 3:15–4:30 · The interception ★
+
+> "Now the real thing. High-value crypto top-up, Lagos, three in the morning."
+>
+> *(inject)*
+>
+> "Risk **95**. Card frozen, escalated. Six checks fired — and now the part that matters:"
+> *(open it)* "it's citing two historical cases. Not 'the model thinks'. **This** case, and
+> **this** one. Every citation is validated against the index; if the model invents an ID,
+> we strip it and record the attempt. Measured groundedness: **100%**, zero fabricated
+> citations."
+
+**Likely question:** *"How do I know it isn't hallucinating the reasoning too?"*
+→ "You don't have to trust the prose — the score is arithmetic you can check. The checks
+that fired are listed with their points and they add to the rule score. The model can only
+move it within a bounded blend, and it's weighted **0.65** when it argues in the customer's
+favour, **0.25** against."
+
+---
+
+### 4:30–5:15 · The human stays in charge
+
+> "This is the analyst's queue. Not a score with a colour — the reasoning, the evidence, and
+> the precedents it reasoned from. She confirms it was fraud, with a note."
+>
+> *(confirm)*
+>
+> "That note just became part of the knowledge store."
+
+**Likely question:** *"What if the analyst is wrong?"*
+→ "Both outcomes are written back. A false positive is as valuable a signal as a confirmed
+fraud, and it's the one that improves precision."
+
+---
+
+### 5:15–6:15 · It learns, on stage ★★
+
+> "Same pattern, different country. Watch the citation."
+>
+> *(inject `fraud_similar`)*
+>
+> "It's citing the case she closed **forty seconds ago**. No retraining, no deployment. An
+> analyst's judgement became retrievable evidence the moment she saved it.
+>
+> That is the difference between a model that knows things and a system that learns."
+
+> ⚠️ **In cached mode, drop "forty seconds ago"** — the recorded response predates the
+> resolution and cites the seeded precedent. Say "cites the matching precedent" instead.
+
+**Likely question:** *"Why RAG rather than fine-tuning?"*
+→ "A fine-tune is a retraining cycle behind the fraud. And you cannot cite a fine-tune — this
+has to be auditable."
+
+---
+
+### 6:15–6:45 · Security
+
+> "Two attacks. First, instructions hidden in a merchant name — quarantined, and the model
+> never saw them. Second, personal data stuffed into a transaction description — tokenised
+> before assembly. The model reasons about '**the same card**' having never seen a card
+> number.
+>
+> That's the answer to 'where does our data go', and it's structural, not a policy."
+
+**Likely question:** *"Would this satisfy PCI DSS?"*
+→ "The tokenisation vault is the right shape for it and every access is audit-logged with an
+actor. We're not claiming certification — we're claiming the model never receives a PAN, and
+you can read the code that guarantees it."
+
+---
+
+### 6:45–8:15 · Measured, not demonstrated
+
+> "Everything so far was a demo. This is the evidence." *(Evaluation page, run it)*
+>
+> "Thirty-eight cases, two arms — rules alone, then the full pipeline. And I want to be
+> precise about what the AI does here, because it isn't what people usually claim.
+>
+> **The model adds no extra detection.** Recall is **100%** both ways. Rules alone block
+> nobody legitimate.
+>
+> What it adds is **precision**. It removed **five of the twelve** step-up challenges the
+> rules were imposing on legitimate customers. False positive rate **43% down to 25%**.
+> Precision **45 up to 59**. Zero extra fraud missed. That is five real people not
+> interrupted, for **seventeen cents** of inference."
+
+**Likely question:** *"Your harness says BELOW TARGET. Why?"*
+→ "Because it counts a *challenge* as a false positive against a ten percent target. Nothing
+legitimate is ever blocked — zero, both arms. The 25% is customers asked to confirm, which is
+the correct action on a genuinely ambiguous transaction. We report against the strict target
+rather than moving it."
+
+**Likely question:** *"Thirty-eight cases is nothing."*
+→ "Agreed — it's a harness, not a validation, and the data is synthetic. The claim is that
+the harness exists, runs against the real pipeline, and caught two design defects we'd
+otherwise have shipped. Scaling it is a data problem."
+
+---
+
+### 8:15–9:30 · Business value & adoption
+
+> *(open the **Business case** page)*
+>
+> "These are live, off this installation. **97%** of transactions never touch a model —
+> that's a property of the rule scores, not of what we happened to spend. On our benchmark
+> volume that's **sixty-one cents** against **fifteen fifty** for an all-model architecture.
+> **Ninety-six percent** less.
+>
+> And the honest limits are on the same page, not hidden — including the one thing our
+> failover cannot do."
+
+**Likely question:** *"What breaks when your provider goes down?"*
+→ "It did, repeatedly, while we built this. Four stages: primary, recorded cache, second
+provider, then rules only — behind a circuit breaker, so a dead primary costs milliseconds
+instead of a twenty-second timeout on every call. The limit: our secondary serves no
+embedding model, so retrieval falls back to its cache. Citations survive for recorded
+scenarios; a brand-new transaction gets no precedents. Pre-flight says exactly that."
+
+**Likely question:** *"Ten million transactions a day?"*
+→ "The rules layer is stateless and scales horizontally. SQLite and FAISS are prototype
+choices — Postgres and a managed vector store are drop-in, which is why the config is
+centralised."
+
+---
+
+### 9:30–10:00 · Close
+
+> "Fewer wrongly declined customers. Faster fraud response. Decisions a customer can
+> interrogate and a regulator can follow. And a system that gets measurably better every
+> time an analyst does their job.
+>
+> We'd rather show you the number we can defend than the number that sounds best. Happy to
+> take questions."
+
+---
+
+## The three sentences to have ready for anything
+
+If a question comes that isn't on any list, one of these usually applies:
+
+1. **"We measured that."** — then give the number, and where it comes from.
+2. **"That's a real limit, and here's exactly where it bites."** — volunteering a limit buys
+   more credibility than any claim you could make instead.
+3. **"The code for that is in `<file>` — the decision is deliberate and here's why."**
+
+And the one thing never to say: *"the AI figures that out."* Every time, name the mechanism.
+
