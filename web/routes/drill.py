@@ -19,7 +19,7 @@ from typing import Any, Callable
 
 from flask import Blueprint, jsonify
 
-from core import db, insights, rules
+from core import db, insights, money, rules
 
 from .. import auth
 
@@ -180,7 +180,7 @@ def _protection(key: str, cid: str) -> dict[str, Any]:
         if keep:
             rows.append({"when": t.timestamp[:16].replace("T", " "), "merchant": t.merchant,
                          "where": f"{t.city}, {t.country}",
-                         "amount": f"{t.amount:,.0f} {t.currency}",
+                         "amount": money.fmt(t.amount, t.currency, dp=0),
                          "risk": d["risk_score"], "outcome": d["action"]})
         if len(rows) >= 25:
             break
@@ -209,17 +209,17 @@ def _spend(key: str, cid: str) -> dict[str, Any]:
         proj = insights.monthly_projection(cid, txns)
         return {
             "label": "Spending this month",
-            "subtitle": f"{proj.spent_so_far:,.0f} {proj.currency} so far",
-            "headline": f"{proj.projected_total:,.0f} {proj.currency} projected",
+            "subtitle": money.fmt(proj.spent_so_far, proj.currency, dp=0) + " so far",
+            "headline": money.fmt(proj.projected_total, proj.currency, dp=0) + " projected",
             "headline_class": "pill-ok" if proj.on_track else "pill-warn",
             "what": "A straight-line run rate: what you have spent so far, divided by the "
                     "days gone, times the days in the month. Deliberately simple so you "
                     "can check it in your head.",
-            "inputs": {"spent_so_far": f"{proj.spent_so_far:,.2f} {proj.currency}",
+            "inputs": {"spent_so_far": money.fmt(proj.spent_so_far, proj.currency),
                        "days_elapsed": proj.days_elapsed,
                        "days_in_month": proj.days_in_month,
-                       "daily_rate": f"{proj.daily_rate:,.2f} {proj.currency}",
-                       "previous_month": f"{proj.previous_month:,.2f} {proj.currency}"},
+                       "daily_rate": money.fmt(proj.daily_rate, proj.currency),
+                       "previous_month": money.fmt(proj.previous_month, proj.currency)},
             "formula": (f"{proj.spent_so_far:,.2f} ÷ {proj.days_elapsed} days"
                         f" = {proj.daily_rate:,.2f} per day\n"
                         f"{proj.daily_rate:,.2f} × {proj.days_in_month} days"
@@ -242,17 +242,17 @@ def _spend(key: str, cid: str) -> dict[str, Any]:
 
     rows = [{"when": t.timestamp[:16].replace("T", " "), "merchant": t.merchant,
              "where": f"{t.city}, {t.country}", "channel": t.channel,
-             "amount": f"{t.amount:,.2f} {t.currency}"}
+             "amount": money.fmt(t.amount, t.currency)}
             for t in txns if t.merchant_category == key][:30]
 
     return {
         "label": f"{key} spending",
-        "subtitle": f"{match:,.0f} {s.currency} over 90 days",
+        "subtitle": money.fmt(match, s.currency, dp=0) + " over 90 days",
         "headline": f"{(match / total * 100 if total else 0):.1f}% of your spending",
         "headline_class": "pill-info",
         "what": f"Every {key} transaction in the last 90 days, and what they add up to.",
-        "inputs": {"category_total_90d": f"{match:,.2f} {s.currency}",
-                   "all_categories_90d": f"{total:,.2f} {s.currency}",
+        "inputs": {"category_total_90d": money.fmt(match, s.currency),
+                   "all_categories_90d": money.fmt(total, s.currency),
                    "transactions": len(rows)},
         "formula": f"{match:,.2f} ÷ {total:,.2f} × 100 = "
                    f"{(match / total * 100 if total else 0):.1f}% of 90-day spending",
@@ -301,12 +301,13 @@ def _txn(key: str, cid: str) -> dict[str, Any]:
     if d is None:
         return {
             "label": txn.merchant,
-            "subtitle": f"{txn.amount:,.2f} {txn.currency} · {txn.timestamp[:16].replace('T', ' ')}",
+            "subtitle": f"{money.fmt(txn.amount, txn.currency)} · "
+                        f"{txn.timestamp[:16].replace('T', ' ')}",
             "sections": [
                 {"kind": "verdict", "headline": "Not checked yet", "tone": "info",
                  "plain": "This payment has not been through our fraud checks yet."},
                 {"kind": "kv", "title": "The payment",
-                 "items": {"amount": f"{txn.amount:,.2f} {txn.currency}",
+                 "items": {"amount": money.fmt(txn.amount, txn.currency),
                            "merchant": txn.merchant,
                            "where": f"{txn.city}, {txn.country}"}},
             ],
@@ -495,7 +496,7 @@ def _txn(key: str, cid: str) -> dict[str, Any]:
     # --- the facts, last, for anyone who wants them ------------------------
     kv: dict[str, Any] = {
         "when": txn.timestamp[:16].replace("T", " "),
-        "amount": f"{txn.amount:,.2f} {txn.currency}",
+        "amount": money.fmt(txn.amount, txn.currency),
         "where": f"{txn.city}, {txn.country}",
         "how it was paid": txn.channel.replace("_", " "),
         "kind of business": txn.merchant_category.replace("_", " "),
@@ -511,7 +512,7 @@ def _txn(key: str, cid: str) -> dict[str, Any]:
     sections.append({"kind": "kv", "title": "The payment", "items": kv})
 
     return {
-        "label": f"{txn.merchant} · {txn.amount:,.0f} {txn.currency}",
+        "label": f"{txn.merchant} · {money.fmt(txn.amount, txn.currency, dp=0)}",
         "subtitle": f"{txn.timestamp[:16].replace('T', ' ')} · {txn.city}, {txn.country}",
         "sections": sections,
     }
@@ -570,7 +571,7 @@ def _alert(key: str, cid: str) -> dict[str, Any]:
         "inputs": {
             "customer": alert.customer_id,
             "transaction": alert.txn_id,
-            "amount": f"{txn.amount:,.2f} {txn.currency}" if txn else "—",
+            "amount": money.fmt(txn.amount, txn.currency) if txn else "—",
             "where": f"{txn.city}, {txn.country}" if txn else "—",
             "region": alert.region or "—",
             "status": alert.status,

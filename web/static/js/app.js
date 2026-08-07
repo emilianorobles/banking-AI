@@ -464,9 +464,18 @@
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
-  function money(n, currency) {
-    return Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 }) +
-           (currency ? " " + currency : "");
+  /* Mirrors core.money.fmt() for the handful of figures the client formats itself. Reads
+     the same table Python declared, handed over as window.SB_CURRENCY by base.html. */
+  function money(n, currency, opts) {
+    opts = opts || {};
+    const c = String(currency || "").toUpperCase();
+    const dp = opts.dp === undefined ? (c === "JPY" ? 0 : 2) : opts.dp;
+    const body = Number(n).toLocaleString(undefined,
+      { minimumFractionDigits: dp, maximumFractionDigits: dp });
+    if (!c) return body;
+    const sym = (window.SB_CURRENCY || {})[c] || c;
+    const out = /^[A-Z]{2,}$/.test(sym) ? `${sym} ${body}` : `${sym}${body}`;
+    return (opts.code === false || sym === c) ? out : `${out} ${c}`;
   }
 
   /* ------------------------------------------------------------------ init */

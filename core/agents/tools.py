@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .. import db, insights, notifications, rag, travel
+from .. import db, insights, money, notifications, rag, travel
 from ..contracts import ToolCall, new_id
 
 
@@ -95,7 +95,14 @@ def list_recent_transactions(customer_id: str, limit: int = 10) -> list[dict[str
         out.append({
             "txn_id": txn.txn_id,
             "when": txn.timestamp[:16].replace("T", " "),
-            "amount": f"{txn.amount:,.2f} {txn.currency}",
+            "amount": money.fmt(txn.amount, txn.currency),
+            # The display string above now carries a currency symbol, so anything that
+            # wants the number has to be given the number. Parsing it back out would be a
+            # parser written against a format that just changed -- and would break again
+            # the next time it does. `merchant` is deliberately still absent: it is
+            # attacker-controlled text and no tool puts it in front of the model.
+            "amount_value": round(txn.amount, 2),
+            "currency": txn.currency,
             "merchant_category": txn.merchant_category,
             "location": f"{txn.city}, {txn.country}",
             "channel": txn.channel,
@@ -187,7 +194,7 @@ def raise_dispute(customer_id: str, txn_id: str = "", reason: str = "") -> dict[
     return {
         "confirmed": True,
         "txn_id": txn.txn_id,
-        "amount": f"{txn.amount:,.2f} {txn.currency}",
+        "amount": money.fmt(txn.amount, txn.currency),
         "provisional_credit": True,
         "sla_days": 10,
         "message": "Dispute opened. Provisional credit applies while we investigate.",

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from . import db, travel
+from . import db, money, travel
 from .contracts import Transaction
 
 
@@ -421,7 +421,7 @@ def security_posture(customer_id: str) -> SecurityPosture:
                     "step_up_challenges": prot.challenges_issued},
             evidence=[{
                 "when": t.timestamp[:16].replace("T", " "),
-                "amount": f"{t.amount:,.2f} {t.currency}",
+                "amount": money.fmt(t.amount, t.currency),
                 "merchant": t.merchant[:28],
                 "decision": (db.get_decision(t.txn_id) or {}).get("action", "—"),
                 "risk": (db.get_decision(t.txn_id) or {}).get("risk_score", "—"),
@@ -566,7 +566,7 @@ def account_health(customer_id: str) -> AccountHealth:
         if d and d["action"] != "ALLOW":
             friction_rows.append({
                 "when": t.timestamp[:16].replace("T", " "),
-                "amount": f"{t.amount:,.2f} {t.currency}",
+                "amount": money.fmt(t.amount, t.currency),
                 "merchant": t.merchant[:26],
                 "outcome": d["action"], "risk": d["risk_score"],
             })
@@ -633,11 +633,11 @@ def account_health(customer_id: str) -> AccountHealth:
         what="How steady your spending is month to month. Predictable spending makes "
              "genuine anomalies easier to spot, so stability genuinely improves how "
              "accurately we can protect you — it is not a judgement about your habits.",
-        inputs={"spent_this_month_so_far": f"{proj.spent_so_far:,.2f} {proj.currency}",
+        inputs={"spent_this_month_so_far": money.fmt(proj.spent_so_far, proj.currency),
                 "day_of_month": f"{proj.days_elapsed} of {proj.days_in_month}",
-                "daily_rate": f"{proj.daily_rate:,.2f} {proj.currency}",
-                "projected_month_total": f"{proj.projected_total:,.2f} {proj.currency}",
-                "previous_month_total": f"{proj.previous_month:,.2f} {proj.currency}",
+                "daily_rate": money.fmt(proj.daily_rate, proj.currency),
+                "projected_month_total": money.fmt(proj.projected_total, proj.currency),
+                "previous_month_total": money.fmt(proj.previous_month, proj.currency),
                 "change": f"{proj.vs_previous_pct:+.1f}%"},
         formula=stability_formula + f"  →  {spend_pts} of 20",
         evidence=[{"category": c, "so_far": f"{s:,.0f}", "projected": f"{p:,.0f}"}
@@ -754,7 +754,7 @@ def upcoming_actions(customer_id: str) -> list[ActionItem]:
         items.append(ActionItem(
             "soon",
             f"Spending tracking {proj.vs_previous_pct:+.0f}% vs last month",
-            f"Projected {proj.projected_total:,.0f} {proj.currency} by month end, "
+            f"Projected {money.fmt(proj.projected_total, proj.currency, dp=0)} by month end, "
             f"against {proj.previous_month:,.0f} last month.",
             "See projection",
         ))
@@ -802,24 +802,27 @@ def build_statement(customer_id: str) -> str:
     lines += [
         "",
         "SPENDING",
-        f"  Last 30 days           {spend.total_30d:,.2f} {spend.currency}"
+        f"  Last 30 days           {money.fmt(spend.total_30d, spend.currency)}"
         f"   ({spend.change_pct:+.1f}% vs previous 30)",
         f"  Transactions           {spend.transaction_count_30d}",
-        f"  Average transaction    {spend.avg_transaction:,.2f} {spend.currency}",
-        f"  Largest                {spend.largest_30d:,.2f} {spend.currency}",
+        f"  Average transaction    {money.fmt(spend.avg_transaction, spend.currency)}",
+        f"  Largest                {money.fmt(spend.largest_30d, spend.currency)}",
         "",
         "  Top categories (90 days):",
     ]
     for cat, amount in spend.by_category[:6]:
-        lines.append(f"    {cat:<22} {amount:>12,.2f} {spend.currency}")
+        # The symbol has to sit inside the field width or the column stops lining up.
+        # The currency is stated once in the header above, so drop the repeated code.
+        lines.append(f"    {cat:<22} "
+                     f"{money.fmt(amount, spend.currency, code=False):>14}")
 
     lines += [
         "",
         "MONTH-END PROJECTION",
-        f"  Spent so far           {proj.spent_so_far:,.2f} {proj.currency}"
+        f"  Spent so far           {money.fmt(proj.spent_so_far, proj.currency)}"
         f"   (day {proj.days_elapsed} of {proj.days_in_month})",
-        f"  Projected total        {proj.projected_total:,.2f} {proj.currency}",
-        f"  Previous month         {proj.previous_month:,.2f} {proj.currency}",
+        f"  Projected total        {money.fmt(proj.projected_total, proj.currency)}",
+        f"  Previous month         {money.fmt(proj.previous_month, proj.currency)}",
         f"  Change                 {proj.vs_previous_pct:+.1f}%",
         "",
         "PROTECTION",
@@ -959,7 +962,8 @@ def travel_budget(customer_id: str, destination: str, days: int = 7) -> TravelBu
         notice_covers=covers,
         assumptions=[
             f"Your own spending over the last 90 days: "
-            f"{spend.total_90d:,.0f} {spend.currency}, or {daily_baseline:,.0f} a day.",
+            f"{money.fmt(spend.total_90d, spend.currency, dp=0)}, or "
+            f"{money.fmt(daily_baseline, spend.currency, dp=0, code=False)} a day.",
             f"{share * 100:.0f}% of that is discretionary — utilities, insurance and rent "
             f"carry on at home whether you travel or not.",
             f"{name} is about {multiplier:.1f}× the daily cost of home for the same "

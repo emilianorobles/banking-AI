@@ -12,7 +12,8 @@ from datetime import timedelta
 
 from flask import Flask, render_template, session
 
-from core import config, db
+from core import config, db, money as money_mod
+from core.money import fmt as money_fmt
 
 
 def create_app() -> Flask:
@@ -73,23 +74,21 @@ def create_app() -> Flask:
             "sb_health": health,
             "active_customer_id": auth_module.active_customer_id() if user else None,
             "all_customers": customers,
+            # Injected into the page as JSON so the browser reads the same table Python
+            # does. See core/money.py for why this is not a second copy in a .js file.
+            "currency_symbols": money_mod.SYMBOLS,
         }
 
+    # Both filters delegate to core.money, which owns the symbol table. Changing these two
+    # is most of the currency work: every template that shows a figure goes through one of
+    # them, so `1,240.00 SGD` becomes `S$1,240.00 SGD` everywhere at once.
     @app.template_filter("money")
     def money(value, currency: str = "") -> str:
-        try:
-            out = f"{float(value):,.0f}"
-        except (TypeError, ValueError):
-            return str(value)
-        return f"{out} {currency}".strip()
+        return money_fmt(value, currency, dp=0)
 
     @app.template_filter("money2")
     def money2(value, currency: str = "") -> str:
-        try:
-            out = f"{float(value):,.2f}"
-        except (TypeError, ValueError):
-            return str(value)
-        return f"{out} {currency}".strip()
+        return money_fmt(value, currency)
 
     @app.template_filter("shortdt")
     def shortdt(value) -> str:

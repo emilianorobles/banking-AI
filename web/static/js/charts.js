@@ -66,12 +66,46 @@
     return s;
   }
 
+  /* Chart-internal abbreviation. Indian crore/lakh, because the demo bank is Indian and
+     every axis label is INR. Left exactly as it was on purpose -- it is called from inside
+     bars(), stackedBars() and areaLine() for gridlines and tooltips, and changing its
+     output would shift measurements those charts already depend on. */
   function fmt(n) {
     const a = Math.abs(n);
     if (a >= 1e7) return (n / 1e7).toFixed(1) + "Cr";
     if (a >= 1e5) return (n / 1e5).toFixed(1) + "L";
     if (a >= 1000) return (n / 1000).toFixed(1) + "k";
     return Math.round(n).toString();
+  }
+
+  /* The currency-aware one. `fmt` abbreviates 12,000,000 as "1.2Cr" whatever the currency,
+     so a USD chart read "1.2Cr" -- crore and lakh are an Indian convention and mean nothing
+     against a dollar figure. Use this anywhere the currency is known; use fmt() for bare
+     chart internals. */
+  function currencySymbol(code) {
+    const table = window.SB_CURRENCY || {};   /* declared in core/money.py, injected by base.html */
+    const c = String(code || "").toUpperCase();
+    return table[c] || c;
+  }
+
+  function fmtMoney(n, code) {
+    const c = String(code || "").toUpperCase();
+    const a = Math.abs(n);
+    let body;
+    if (c === "INR") {
+      body = a >= 1e7 ? (n / 1e7).toFixed(1) + "Cr"
+           : a >= 1e5 ? (n / 1e5).toFixed(1) + "L"
+           : a >= 1000 ? (n / 1000).toFixed(1) + "k"
+           : Math.round(n).toString();
+    } else {
+      body = a >= 1e9 ? (n / 1e9).toFixed(1) + "B"
+           : a >= 1e6 ? (n / 1e6).toFixed(1) + "M"
+           : a >= 1000 ? (n / 1000).toFixed(1) + "K"
+           : Math.round(n).toString();
+    }
+    if (!c) return body;
+    const sym = currencySymbol(c);
+    return /^[A-Z]{2,}$/.test(sym) ? `${sym} ${body}` : `${sym}${body}`;
   }
 
   function title(node, text) {
@@ -431,6 +465,6 @@
 
   global.SBCharts = {
     ring, donut, bars, stackedBars, areaLine, sparkline, heatGrid, gauge,
-    palette, fmt, gradeColour, legend,
+    palette, fmt, fmtMoney, currencySymbol, gradeColour, legend,
   };
 })(window);
