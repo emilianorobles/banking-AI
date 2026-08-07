@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from flask import (Blueprint, flash, jsonify, redirect, render_template,
                    session, url_for)
 
-from core import config, db, llm, pipeline, rag, seed, travel
+from core import config, db, llm, pipeline, rag, rules, seed, travel
 from core.contracts import Transaction, new_id
 
 from .. import auth
@@ -192,9 +192,19 @@ def preflight():
                        "cached query vectors, so citations work for the scripted beats "
                        "but not for improvised ones")
 
+    # A rule whose ID has drifted from RULE_META is disabled silently -- evaluate()
+    # swallows the KeyError -- so the scores on stage would be quietly wrong. Nothing to
+    # fix automatically, but this is the moment to find out.
+    rule_problems = rules.selfcheck()
+    if rule_problems:
+        changes.append(f"RULE METADATA HAS DRIFTED ({len(rule_problems)} problem(s)) — "
+                       f"affected rules are silently disabled: "
+                       + "; ".join(rule_problems))
+
     return jsonify({
         "ok": True,
         "changes": changes or ["nothing to fix — already in a good state"],
+        "rules_ok": not rule_problems,
         "index_size": rag.index_size(),
         "pending_alerts": len(db.list_alerts(status="PENDING", limit=500)),
         "mode": config.DEMO_MODE,

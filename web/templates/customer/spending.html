@@ -103,7 +103,7 @@
       <div class="tiny dim">Every row opens the screening decision behind it.</div>
     </div>
   </div>
-  {{ txn_table(txns, {}, limit=40, show_risk=False) }}
+  {{ txn_table(txns, decisions, limit=40) }}
 </section>
 
 {% endblock %}

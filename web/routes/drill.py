@@ -260,78 +260,308 @@ def _spend(key: str, cid: str) -> dict[str, Any]:
     }
 
 
+# What each outcome means, said the way a person would say it. No enum ever reaches the
+# customer: "FREEZE_AND_ESCALATE" is a database value, not an explanation.
+VERDICTS: dict[str, tuple[str, str, str]] = {
+    "ALLOW": ("We let this through", "ok",
+              "Nothing about this payment looked wrong, so it went through normally."),
+    "CHALLENGE": ("We asked you to confirm it", "warn",
+                  "A few things about this payment were unusual — not enough to stop it, "
+                  "but enough that we wanted to hear from you before it went through."),
+    "FREEZE_AND_ESCALATE": ("We blocked this", "danger",
+                            "This looked enough like fraud that we stopped it and sent it "
+                            "to a person to review, rather than deciding on our own."),
+    "QUARANTINE": ("We held this back", "danger",
+                   "Something in this payment's details tried to interfere with our "
+                   "checks, so we set it aside for a person to look at."),
+}
+
+
 def _txn(key: str, cid: str) -> dict[str, Any]:
-    """One transaction: the rules that fired, the score, and the agent's reasoning."""
+    """One transaction, explained to the person it happened to.
+
+    This is the answer to "why was this flagged?" and it has two halves that matter
+    equally. The first is what fired. The second — which did not exist at all until now —
+    is what *didn't*: the checks that were evaluated and found not to apply, and the ones
+    a travel notice suppressed. A screen that only ever lists reasons to be suspicious
+    reads like an accusation; the reassurance half is what makes it an explanation.
+    """
     txn = db.get_transaction(key)
-    if txn is None or txn.customer_id != cid:
+    if txn is None:
         return {}
+    # An analyst working the ops console has to be able to open any transaction; a
+    # customer only ever their own. Scoping to `cid` unconditionally meant "Full detail"
+    # in the alert queue could never open anything.
+    user = auth.current_user() or {}
+    if txn.customer_id != cid and user.get("role") not in ("analyst", "admin"):
+        return {}
+    staff = user.get("role") in ("analyst", "admin")
+
     d = db.get_decision(key)
     if d is None:
-        return {"label": txn.merchant, "subtitle": key,
-                "what": "This transaction has not been scored yet.",
-                "inputs": {"amount": f"{txn.amount:,.2f} {txn.currency}",
+        return {
+            "label": txn.merchant,
+            "subtitle": f"{txn.amount:,.2f} {txn.currency} · {txn.timestamp[:16].replace('T', ' ')}",
+            "sections": [
+                {"kind": "verdict", "headline": "Not checked yet", "tone": "info",
+                 "plain": "This payment has not been through our fraud checks yet."},
+                {"kind": "kv", "title": "The payment",
+                 "items": {"amount": f"{txn.amount:,.2f} {txn.currency}",
                            "merchant": txn.merchant,
-                           "where": f"{txn.city}, {txn.country}"}}
+                           "where": f"{txn.city}, {txn.country}"}},
+            ],
+        }
 
+    facts = insights.parse_guardrail_notes(d.get("guardrail_notes"))
     hits = d.get("rule_hits") or []
-    rule_rows = [{"rule": h.get("rule_id"), "points": h.get("weight"),
-                  "why it fired": h.get("reason")} for h in hits]
+    fired_ids = [str(h.get("rule_id")) for h in hits]
+    rule_score, risk = int(d["rule_score"]), int(d["risk_score"])
 
-    formula = "\n".join(f"{h.get('weight'):>3}  {h.get('rule_id')}" for h in hits) or \
-              "  0  no rule fired"
-    formula += f"\n{'-' * 34}\n{d['rule_score']:>3}  rule score"
-    if d.get("llm_used"):
-        confidence = d.get("confidence")
-        formula += (f"\n\nAI analyst reviewed it against "
-                    f"{len(d.get('retrieved_case_ids') or [])} similar historical cases"
-                    + (f" ({confidence:.0%} confident)" if confidence else "") + ".")
+    sections: list[dict[str, Any]] = []
+
+    # --- 1. the verdict, in a sentence -------------------------------------
+    headline, tone, plain = VERDICTS.get(
+        d["action"], ("We reviewed this", "info", "This payment was checked."))
+    sections.append({"kind": "verdict", "headline": headline, "tone": tone, "plain": plain})
+
+    # --- 2. how the score was built ----------------------------------------
+    # One bar per everyday AREA rather than per rule. Two reasons: stackedBars elides its
+    # row label past 15 characters, and every rule title is longer than that; and a
+    # customer reads five areas far more easily than twelve individual checks. The
+    # individual checks are still visible -- they are the segments, and each carries its
+    # own SVG <title> tooltip.
+    if hits:
+        area_hits: dict[str, list[dict[str, Any]]] = {}
+        for h in hits:
+            area_hits.setdefault(rules.meta(h.get("rule_id")).category, []).append(h)
+        area_rows = sorted(
+            area_hits.items(),
+            key=lambda kv: rules.CATEGORIES.index(kv[0]) if kv[0] in rules.CATEGORIES else 99)
+        height = 60 + 34 * len(area_rows)
+        sections.append({
+            "kind": "chart", "title": "What added up to the score",
+            "chart_type": "stackedBars", "height": height,
+            "data": [{"label": area,
+                      "total": sum(int(h.get("weight") or 0) for h in group),
+                      "parts": [{"label": rules.meta(h.get("rule_id")).title,
+                                 "value": int(h.get("weight") or 0)} for h in group]}
+                     for area, group in area_rows],
+            "opts": {"height": height},
+            "caption": f"Each check that applied adds its own points. Together they came "
+                       f"to {rule_score} out of 100.",
+        })
+
+    # --- 3. rule score -> final risk ---------------------------------------
+    # The model's raw score is NOT persisted and `_blend`'s rounding makes any attempt to
+    # invert it approximate. Showing an inferred number as if it were a recorded fact is
+    # not something a bank UI gets to do, so state the policy instead -- which is the
+    # better line anyway, because the asymmetry is the point.
+    if not d.get("llm_used"):
+        policy = ("The checks were clear enough on their own, so no AI was involved at "
+                  "all and this decision cost nothing to make.")
+    elif risk < rule_score:
+        policy = ("Our AI reviewer argued this was safer than the checks assumed. When it "
+                  "argues in your favour we give it 65% of the weight.")
+    elif risk > rule_score:
+        policy = ("Our AI reviewer thought this was riskier. When it argues against you "
+                  "we give it only 25% — the checks are already good at spotting risk, "
+                  "and we would rather not interrupt you on a hunch.")
+    elif rule_score >= 90:
+        policy = ("The score from the checks was high enough that no opinion could talk "
+                  "past it.")
     else:
-        formula += ("\n\nThe rule score was decisive on its own, so no model was called "
-                    "and this decision cost nothing.")
-    formula += f"\n\nfinal risk {d['risk_score']}  →  {d['action']}"
+        policy = "Our AI reviewer agreed with the checks, so the score did not move."
+
+    sections.append({
+        "kind": "chart", "title": "From the checks to the final score",
+        "chart_type": "bars", "height": 160,
+        "data": [{"label": "Checks", "value": rule_score},
+                 {"label": "Final", "value": risk}],
+        "opts": {"height": 160},
+        "caption": policy,
+    })
+
+    # --- 4. the three-state checklist, grouped by everyday area ------------
+    # Derived by SET ARITHMETIC over what was stored, never by re-running rules.evaluate().
+    # Four rules read `history`, which has grown since this decision was made, and
+    # rule_frozen_card reads the customer's LIVE card_frozen flag -- so after the fraud
+    # injection beat freezes the hero card, a re-run would re-score every past transaction
+    # to ~100 and contradict the number printed two sections above.
+    suppressed_ids = set(facts.travel_suppressed)
+    fired = set(fired_ids)
+    checked_ids = [rid for rid in rules.RULE_META if rid not in fired | suppressed_ids]
+
+    if hits:
+        sections.append({
+            "kind": "checklist", "title": "Why this was flagged",
+            "items": [{"label": rules.meta(h.get("rule_id")).title, "state": "fired",
+                       "detail": f"{rules.meta(h.get('rule_id')).plain}  "
+                                 f"(+{h.get('weight')} points)"}
+                      for h in hits],
+        })
+
+    if suppressed_ids:
+        sections.append({
+            "kind": "checklist",
+            "title": "We would have flagged this, but you told us you were travelling",
+            "subtitle": "Your travel notice cancelled these out before they counted.",
+            "items": [{"label": rules.meta(rid).title, "state": "suppressed",
+                       "detail": f"{rules.meta(rid).plain}  "
+                                 f"(would have added {rules.meta(rid).points} points)"}
+                      for rid in sorted(suppressed_ids)],
+        })
+
+    if checked_ids:
+        by_area: dict[str, list[str]] = {}
+        for rid in checked_ids:
+            by_area.setdefault(rules.meta(rid).category, []).append(rules.meta(rid).title)
+        sections.append({
+            "kind": "checklist", "title": "Other things we check on every payment",
+            # Honest wording. These were evaluated and did not apply -- that is not the
+            # same as "verified", and a neutral dot is not a green tick for a reason.
+            "subtitle": "We looked at each of these and they did not apply here.",
+            "items": [{"label": area, "state": "clear", "detail": ", ".join(titles)}
+                      for area, titles in
+                      sorted(by_area.items(), key=lambda kv: rules.CATEGORIES.index(kv[0])
+                             if kv[0] in rules.CATEGORIES else 99)],
+        })
+
+    # --- 5. the detail table ------------------------------------------------
+    if hits:
+        sections.append({
+            "kind": "table", "title": "The detail",
+            "columns": [{"key": "check", "label": "What we checked"},
+                        {"key": "meaning", "label": "What it means"},
+                        {"key": "points", "label": "Points", "num": True}],
+            "rows": [{"check": rules.meta(h.get("rule_id")).title,
+                      "meaning": rules.meta(h.get("rule_id")).plain,
+                      "points": f"+{h.get('weight')}"} for h in hits],
+            "note": f"Total {rule_score} of 100. Under 30 goes through, over 90 is "
+                    f"stopped, and anything in between gets an AI review.",
+        })
+        if staff:
+            # The raw rule text is precise and full of jargon. It belongs to the analyst,
+            # not to the customer whose payment this was.
+            sections.append({
+                "kind": "table", "title": "Technical detail (fraud operations)",
+                "columns": [{"key": "rule", "label": "Rule"},
+                            {"key": "reason", "label": "Recorded reason"},
+                            {"key": "points", "label": "Weight", "num": True}],
+                "rows": [{"rule": h.get("rule_id"), "reason": h.get("reason"),
+                          "points": h.get("weight")} for h in hits],
+            })
+
+    # --- 6. what the AI weighed --------------------------------------------
+    if d.get("llm_used"):
+        if facts.key_factors:
+            sections.append({
+                "kind": "checklist", "title": "What our AI reviewer weighed",
+                "items": [{"label": f, "state": "clear"} for f in facts.key_factors],
+            })
+        if d.get("reasoning"):
+            sections.append({"kind": "note", "tone": "info", "body": d["reasoning"]})
+        if facts.counterfactual:
+            sections.append({"kind": "text", "title": "What would have changed its mind",
+                             "body": facts.counterfactual})
+        cited = d.get("cited_case_ids") or []
+        if cited:
+            sections.append({
+                "kind": "pills", "title": "Past cases it reasoned from",
+                "items": [{"label": c, "tone": "violet"} for c in cited],
+            })
+            sections.append({
+                "kind": "text",
+                "body": "Our AI is not allowed to invent a precedent. Every case listed "
+                        "above is a real one it was shown, and any it cannot point to is "
+                        "dropped before you ever see this.",
+            })
+        elif facts.llm_unavailable:
+            sections.append({
+                "kind": "note", "tone": "warn",
+                "body": "Our AI reviewer could not be reached for this one, so the "
+                        "decision was made by the checks alone.",
+            })
+
+    # Rule pills stay clickable, but only for staff -- a customer gets the plain-English
+    # names above and has no use for a rule ID. Works inside the modal because openModal()
+    # re-runs wireDrilldowns() over its own content.
+    if staff and fired_ids:
+        sections.append({
+            "kind": "pills", "title": "Open a rule",
+            "items": [{"label": rid, "tone": "warn", "drill": f"rule:{rid}"}
+                      for rid in fired_ids],
+        })
+
+    # --- the facts, last, for anyone who wants them ------------------------
+    kv: dict[str, Any] = {
+        "when": txn.timestamp[:16].replace("T", " "),
+        "amount": f"{txn.amount:,.2f} {txn.currency}",
+        "where": f"{txn.city}, {txn.country}",
+        "how it was paid": txn.channel.replace("_", " "),
+        "kind of business": txn.merchant_category.replace("_", " "),
+        "score from the checks": f"{rule_score} of 100",
+        "final score": f"{risk} of 100",
+        "AI reviewer involved": "yes" if d.get("llm_used") else "no — the checks were clear",
+        "decided in": f"{d.get('latency_ms') or 0} ms",
+    }
+    if facts.pii_tokenized:
+        kv["personal details hidden from the AI"] = (
+            f"{facts.pii_tokenized} ({', '.join(facts.pii_kinds)})"
+            if facts.pii_kinds else str(facts.pii_tokenized))
+    sections.append({"kind": "kv", "title": "The payment", "items": kv})
 
     return {
         "label": f"{txn.merchant} · {txn.amount:,.0f} {txn.currency}",
-        "subtitle": f"{txn.txn_id} — {d['action'].replace('_', ' ').title()}",
-        "headline": f"Risk {d['risk_score']}/100",
-        "headline_class": _risk_class(d["risk_score"]),
-        "grade": d["risk_level"],
-        "what": "Deterministic rules score first. Only when the result is genuinely "
-                "ambiguous does an AI analyst look at it, and when it does it has to cite "
-                "the historical cases it reasoned from.",
-        "inputs": {
-            "when": txn.timestamp[:16].replace("T", " "),
-            "amount": f"{txn.amount:,.2f} {txn.currency}",
-            "where": f"{txn.city}, {txn.country}",
-            "channel": txn.channel,
-            "category": txn.merchant_category,
-            "rule_score": d["rule_score"],
-            "final_risk": d["risk_score"],
-            "ai_analyst_consulted": "yes" if d.get("llm_used") else "no — rules were decisive",
-            "travel_notice_applied": "yes" if d.get("suppressed_by_travel") else "no",
-            "decided_in_ms": d.get("latency_ms") or 0,
-        },
-        "formula": formula,
-        "evidence": rule_rows,
-        "remediation": d.get("reasoning") or "",
-        "note": ("Cited cases: " + ", ".join(d.get("cited_case_ids") or [])
-                 if d.get("cited_case_ids") else
-                 "Decided by rules alone — no model call, and therefore no cost."),
-        "passed": d["action"] == "ALLOW",
+        "subtitle": f"{txn.timestamp[:16].replace('T', ' ')} · {txn.city}, {txn.country}",
+        "sections": sections,
     }
 
 
-def _alert(key: str, _cid: str) -> dict[str, Any]:
-    """An alert as the analyst sees it. Staff-only — gated below."""
+def _alert(key: str, cid: str) -> dict[str, Any]:
+    """An alert as the analyst sees it. Staff-only — gated below.
+
+    Delegates the body to `_txn`, which is where the explanation lives. Duplicating it
+    here is how the two views drifted apart in the first place: this one still rendered
+    raw rule IDs after the transaction view had stopped.
+    """
     alert = db.get_alert(key)
     if alert is None:
         return {}
     txn = db.get_transaction(alert.txn_id)
     d = db.get_decision(alert.txn_id) or {}
-    hits = d.get("rule_hits") or []
 
+    detail = _txn(alert.txn_id, cid) if txn is not None else {}
+    if detail.get("sections"):
+        head: list[dict[str, Any]] = [{
+            "kind": "kv", "title": "Case",
+            "items": {"alert": alert.alert_id,
+                      "customer": alert.customer_id,
+                      "transaction": alert.txn_id,
+                      "region": alert.region or "—",
+                      "status": alert.status,
+                      "raised": alert.created_at[:16].replace("T", " ")},
+        }]
+        if alert.status != "PENDING":
+            head.append({
+                "kind": "note",
+                "tone": "danger" if alert.outcome == "confirmed_fraud" else "ok",
+                "body": f"{(alert.outcome or '').replace('_', ' ') or 'Resolved'} by "
+                        f"{alert.resolved_by or 'an analyst'}"
+                        + (f" — “{alert.analyst_note}”" if alert.analyst_note else "")
+                        + (f"  Written into the knowledge store as {alert.learned_case_id}, "
+                           f"retrievable from now on."
+                           if alert.learned_case_id else ""),
+            })
+        return {
+            "label": f"{alert.alert_id} · {alert.region or 'unknown region'}",
+            "subtitle": alert.summary,
+            "sections": head + detail["sections"],
+        }
+
+    # The transaction behind the alert is missing — degrade to what the alert itself knows.
+    hits = d.get("rule_hits") or []
     return {
-        "label": f"{alert.alert_id} · {alert.priority}",
+        "label": f"{alert.alert_id} · {alert.region or 'unknown region'}",
         "subtitle": alert.summary,
         "headline": f"Risk {alert.risk_score}/100",
         "headline_class": _risk_class(alert.risk_score),
@@ -342,7 +572,7 @@ def _alert(key: str, _cid: str) -> dict[str, Any]:
             "transaction": alert.txn_id,
             "amount": f"{txn.amount:,.2f} {txn.currency}" if txn else "—",
             "where": f"{txn.city}, {txn.country}" if txn else "—",
-            "priority": alert.priority,
+            "region": alert.region or "—",
             "status": alert.status,
             "raised": alert.created_at[:16].replace("T", " "),
             "ai_analyst_consulted": "yes" if d.get("llm_used") else "no",
@@ -425,51 +655,44 @@ def _cost(key: str, _cid: str) -> dict[str, Any]:
     return {}
 
 
-# Presentation metadata for the rules. The rule logic lives in core/rules.py; this is
-# only the plain-English gloss the UI shows, which is a UI concern.
-RULE_CATALOGUE: dict[str, tuple[str, int, str]] = {
-    "CARD_ALREADY_FROZEN": ("The card is already frozen, so nothing should authorise on it.",
-                            60, "Unfreeze the card once you have confirmed recent activity."),
-    "AMOUNT_EXTREME": ("The amount is 10× or more the largest transaction this customer has "
-                       "ever made.", 35, ""),
-    "AMOUNT_ANOMALY": ("The amount is 3× or more the customer's usual maximum.", 22, ""),
-    "GEO_FOREIGN": ("The transaction is outside the customer's home country.", 14,
-                    "File a travel notice before you go and this stops firing."),
-    "GEO_NEW_COUNTRY": ("The customer has never transacted in this country before.", 16,
-                        "Covered by a travel notice for the destination."),
-    "IMPOSSIBLE_TRAVEL": ("Two transactions too far apart to be reached in the time between "
-                          "them.", 30, ""),
-    "VELOCITY": ("An unusual burst of transactions in a short window.", 20, ""),
-    "CARD_TESTING": ("Several small transactions in quick succession — the pattern used to "
-                     "test whether a stolen card still works.", 28, ""),
-    "CNP_HIGH_VALUE": ("A high-value card-not-present transaction, where no physical card "
-                       "was checked.", 18, ""),
-    "ODD_HOUR": ("A transaction at an hour this customer never normally transacts.", 8, ""),
-    "MERCHANT_RISK": ("A merchant category with a historically elevated fraud rate.", 12, ""),
-}
-
-
 def _rule(key: str, _cid: str) -> dict[str, Any]:
-    entry = RULE_CATALOGUE.get(key.upper())
-    if entry is None:
+    """One check, explained. Metadata comes from `core.rules.RULE_META`.
+
+    This used to keep its own RULE_CATALOGUE copy of the weights and wording, which drifted
+    from the engine: five weights were wrong and four of its IDs -- IMPOSSIBLE_TRAVEL,
+    VELOCITY, MERCHANT_RISK and a missing VELOCITY_ELEVATED -- were not rule IDs the engine
+    ever emits, so those pills 404'd on click. Reading the engine's own table is what makes
+    a second copy impossible rather than merely discouraged.
+    """
+    rule_id = key.upper()
+    if rule_id not in rules.RULE_META:
         return {}
-    what, weight, fix = entry
+    m = rules.RULE_META[rule_id]
+
+    same_area = [o.title for o in rules.RULE_META.values()
+                 if o.category == m.category and o.rule_id != rule_id]
+
     return {
-        "label": key.upper(),
-        "subtitle": f"Adds {weight} points to the risk score",
-        "headline": f"+{weight} points",
-        "headline_class": "pill-warn" if weight < 30 else "pill-danger",
-        "what": what,
-        "inputs": {"rule_id": key.upper(), "weight": weight,
-                   "rules_in_engine": len(rules.RULES)},
-        "formula": "Rules are additive. The rule score is the sum of every rule that fired, "
-                   "capped at 100.\n\nUnder 30 → allow with no model call.\n"
-                   "Over 90 → freeze with no model call.\n"
-                   "Between → the AI analyst is consulted.",
-        "remediation": fix,
-        "note": "Rules are deterministic and auditable: the same transaction always "
-                "produces the same rule score, which is why they can be trusted to decide "
-                "without a model.",
+        "label": m.title,
+        "subtitle": f"Adds {m.points} points to the risk score",
+        "headline": f"+{m.points} points",
+        "headline_class": "pill-warn" if m.points < 30 else "pill-danger",
+        "what": m.plain,
+        "inputs": {
+            "area": m.category,
+            "points_added": m.points,
+            "other_checks_in_this_area": ", ".join(same_area) or "none",
+            "checks_in_total": len(rules.RULE_META),
+        },
+        "formula": "Every check that applies adds its points together, capped at 100.\n\n"
+                   "Under 30  →  allowed, with no AI involved and no cost.\n"
+                   "Over 90   →  blocked, with no AI involved and no cost.\n"
+                   "In between →  an AI reviewer looks at it against similar past cases.",
+        "remediation": m.fix,
+        "note": (f"Technical detail: {m.technical}\n\n" if m.technical else "") +
+                f"Reference {rule_id}. These checks are deterministic: the same "
+                f"transaction always produces the same score, which is why they can be "
+                f"trusted to decide without an AI.",
     }
 
 

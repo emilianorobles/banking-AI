@@ -89,11 +89,192 @@
   });
 
   /* ------------------------------------------------------------- drilldown */
+
+  /* Charts the server is allowed to ask for, by name. A LITERAL map, deliberately -- not
+     `SBCharts[spec.type]`, which would let a payload name any property on the object
+     including `constructor` and `__proto__`. Resolved at call time rather than captured at
+     definition time so load order between charts.js and app.js cannot matter. */
+  const DRILL_CHARTS = {
+    ring:        (h, d, o) => global.SBCharts.ring(h, d, o),
+    donut:       (h, d, o) => global.SBCharts.donut(h, d, o),
+    bars:        (h, d, o) => global.SBCharts.bars(h, d, o),
+    stackedBars: (h, d, o) => global.SBCharts.stackedBars(h, d, o),
+    areaLine:    (h, d, o) => global.SBCharts.areaLine(h, d, o),
+    sparkline:   (h, d, o) => global.SBCharts.sparkline(h, d, o),
+    heatGrid:    (h, d, o) => global.SBCharts.heatGrid(h, d, o),
+    gauge:       (h, d, o) => global.SBCharts.gauge(h, d, o),
+  };
+
+  /* The drill envelope carries DATA, never markup -- renderDrill escapes every value it is
+     given, and that is the property worth keeping, because the strings inside a payload
+     include merchant names that came from outside the bank. So a chart arrives as
+     {type, data, opts} and is drawn here, and a section arrives as a kind plus fields.
+
+     Charts cannot be drawn during renderDrill because it returns a string and SBCharts
+     needs a live DOM node. renderDrill therefore emits numbered placeholders and
+     paintCharts fills them after the HTML is in the document. Both derive the ordering
+     from chartSpecs(), so the numbering cannot drift. */
+  function chartSpecs(d) {
+    const specs = [];
+    (d.charts || []).forEach(c => specs.push(c));
+    (d.sections || []).forEach(s => {
+      if (s && s.kind === "chart") {
+        specs.push({ type: s.chart_type, title: s.title, data: s.data,
+                     opts: s.opts, height: s.height });
+      }
+    });
+    return specs;
+  }
+
+  function chartSlot(i, spec) {
+    const style = spec && spec.height ? ` style="min-height:${Number(spec.height)}px"` : "";
+    return `<div class="chart-slot" data-chart-slot="${i}"${style}></div>`;
+  }
+
+  /* Second caller is the chat widget (tool result visuals), which is why this takes a
+     spec LIST rather than a drill payload. */
+  function paintCharts(specs, root) {
+    if (!specs || !specs.length) return;
+    const host = root || document;
+    specs.forEach((spec, i) => {
+      const slot = host.querySelector(`[data-chart-slot="${i}"]`);
+      if (!slot || !spec) return;
+      const draw = Object.prototype.hasOwnProperty.call(DRILL_CHARTS, spec.type)
+        ? DRILL_CHARTS[spec.type] : null;
+      if (!draw || !global.SBCharts) {
+        slot.innerHTML = '<p class="dim small">Chart unavailable.</p>';
+        return;
+      }
+      try {
+        draw(slot, spec.data, spec.opts || {});
+      } catch (err) {
+        /* One bad chart must not blank the rest of the explanation. */
+        slot.innerHTML = '<p class="dim small">Could not draw this chart.</p>';
+      }
+    });
+  }
+
+  /* ---- section kinds. Unknown kinds render nothing, so the server can add one before
+     every client has reloaded. --------------------------------------------------- */
+  const TONE_PILL = { ok: "pill-ok", info: "pill-info", warn: "pill-warn",
+                      danger: "pill-danger", critical: "pill-critical", violet: "pill-violet" };
+  const TONE_NOTE = { ok: "note-ok", info: "", warn: "note-warn", danger: "note-danger" };
+  /* Three states, and none of them is a green tick. A check that did not fire was
+     evaluated and found not to apply -- it was not "verified", and claiming otherwise in a
+     bank UI is a promise the system has not made. */
+  const CHECK_ICON = { fired: "●", suppressed: "◐", clear: "○" };
+  const CHECK_TONE = { fired: "pill-danger", suppressed: "pill-info", clear: "" };
+
+  function sectionHtml(s, slotOf) {
+    if (!s || !s.kind) return "";
+    const h = s.title ? `<h4 style="margin-top:1rem">${escapeHtml(s.title)}</h4>` : "";
+
+    switch (s.kind) {
+      case "verdict":
+        return `<div class="row" style="gap:.5rem;margin-bottom:.35rem">
+                  <span class="pill ${TONE_PILL[s.tone] || "pill-info"}">${escapeHtml(s.headline || "")}</span>
+                </div>
+                ${s.plain ? `<p style="margin:.2rem 0 1rem">${escapeHtml(s.plain)}</p>` : ""}`;
+
+      case "text":
+        return h + `<p class="muted small">${escapeHtml(s.body || "")}</p>`;
+
+      case "chart":
+        return h + chartSlot(slotOf(), s) +
+               (s.caption ? `<p class="dim tiny" style="margin-top:.3rem">${escapeHtml(s.caption)}</p>` : "");
+
+      case "table": {
+        /* Explicit columns, not a union of row keys: fixed order, right-aligned money via
+           the existing .tbl .num, and a row may omit a column without shifting the header. */
+        const cols = s.columns || [];
+        if (!cols.length || !(s.rows || []).length) return "";
+        return h + `<div class="tbl-wrap"><table class="tbl"><thead><tr>` +
+          cols.map(c => `<th${c.num ? ' class="num"' : ""}>${escapeHtml(c.label || prettyKey(c.key))}</th>`).join("") +
+          `</tr></thead><tbody>` +
+          s.rows.map(row => `<tr>` + cols.map(c => {
+            const v = row[c.key];
+            return `<td${c.num ? ' class="num"' : ""}>${escapeHtml(v === null || v === undefined ? "—" : v)}</td>`;
+          }).join("") + `</tr>`).join("") +
+          `</tbody></table></div>` +
+          (s.note ? `<p class="dim tiny" style="margin-top:.35rem">${escapeHtml(s.note)}</p>` : "");
+      }
+
+      case "kv": {
+        const entries = Array.isArray(s.items) ? s.items : Object.entries(s.items || {});
+        if (!entries.length) return "";
+        return h + `<dl class="kv">` + entries.map(([k, v]) =>
+          `<dt>${escapeHtml(prettyKey(k))}</dt><dd>${escapeHtml(v)}</dd>`).join("") + `</dl>`;
+      }
+
+      case "checklist": {
+        const items = s.items || [];
+        if (!items.length) return "";
+        return h +
+          (s.subtitle ? `<p class="dim tiny" style="margin:-.3rem 0 .4rem">${escapeHtml(s.subtitle)}</p>` : "") +
+          items.map(it => {
+            const tone = CHECK_TONE[it.state] || "";
+            return `<div class="checkrow">
+                      <span class="ic ${tone ? "" : "dim"}"
+                            style="${tone ? `color:var(--${it.state === "fired" ? "danger" : "info"})` : ""}"
+                            aria-hidden="true">${CHECK_ICON[it.state] || "○"}</span>
+                      <div style="min-width:0">
+                        <div class="small"><strong>${escapeHtml(it.label || "")}</strong></div>
+                        ${it.detail ? `<div class="tiny dim" style="margin-top:.15rem">${escapeHtml(it.detail)}</div>` : ""}
+                      </div>
+                    </div>`;
+          }).join("");
+      }
+
+      case "formula":
+        return h + `<pre class="code">${escapeHtml(s.body || "")}</pre>`;
+
+      case "note":
+        return `<div class="note ${TONE_NOTE[s.tone] === undefined ? "" : TONE_NOTE[s.tone]}"
+                     style="margin-top:1rem">${escapeHtml(s.body || "")}</div>`;
+
+      case "pills": {
+        const items = s.items || [];
+        if (!items.length) return "";
+        return h + `<div class="row" style="margin-top:.4rem">` + items.map(p => {
+          const cls = TONE_PILL[p.tone] || "pill-info";
+          /* Clickable only when the server named a drill target -- and it works inside the
+             modal because openModal() re-runs wireDrilldowns() over its own content. */
+          return p.drill
+            ? `<button class="pill ${cls}" style="cursor:pointer;border:0;font-family:inherit"
+                       data-drill="${escapeHtml(p.drill)}"
+                       data-drill-title="${escapeHtml(p.label || "")}">${escapeHtml(p.label || "")}</button>`
+            : `<span class="pill ${cls}">${escapeHtml(p.label || "")}</span>`;
+        }).join("") + `</div>`;
+      }
+
+      default:
+        return "";
+    }
+  }
+
   /* Every health and security card carries data-drill="<kind>:<key>". Clicking it asks
      the server what actually went into that number and renders the working. This is the
      whole reason the migration happened, so it is deliberately generic and reusable. */
   function renderDrill(d) {
     let html = "";
+
+    /* Top-level charts render above everything, before the seven legacy blocks. */
+    let slot = 0;
+    const nextSlot = () => slot++;
+    (d.charts || []).forEach(c => {
+      html += (c.title ? `<h4>${escapeHtml(c.title)}</h4>` : "") + chartSlot(nextSlot(), c) +
+              (c.caption ? `<p class="dim tiny" style="margin-top:.3rem">${escapeHtml(c.caption)}</p>` : "");
+    });
+
+    /* `sections` is additive. When a handler sends one, it owns the whole body and can be
+       laid out however that explanation wants; when it does not, the original seven fixed
+       blocks render exactly as before. That is what keeps the seven drill kinds nobody is
+       redesigning at zero regression risk. */
+    if (d.sections && d.sections.length) {
+      d.sections.forEach(s => { html += sectionHtml(s, nextSlot); });
+      return html || '<p class="dim">No detail available.</p>';
+    }
+
 
     if (d.headline) {
       html += `<div class="row" style="gap:.5rem;margin-bottom:.9rem">
@@ -150,6 +331,9 @@
     try {
       const d = await getJSON(`/api/drill/${encodeURIComponent(kind)}/${encodeURIComponent(key)}`);
       openModal(renderDrill(d), { title: d.label || title || "Detail", subtitle: d.subtitle || "", large: true });
+      /* After openModal, never before: the placeholders have to be in the document before
+         SBCharts can be handed a node to draw into. */
+      paintCharts(chartSpecs(d), document.getElementById("modal-host"));
     } catch (err) {
       openModal(`<div class="note note-danger">Could not load detail: ${escapeHtml(err.message)}</div>`,
                 { title: title || "Detail" });
@@ -303,5 +487,6 @@
     getJSON, postJSON, toast, openModal, closeModal, loadingModal,
     drill, wireDrilldowns, escapeHtml, money, prettyKey, renderDrill,
     pollNotifications, applyMask, applyTheme, toggleTheme, currentTheme,
+    paintCharts, chartSpecs, chartSlot,
   };
 })(window);

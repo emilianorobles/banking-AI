@@ -69,6 +69,10 @@ def spending():
         spend=insights.spend_analytics(cid, txns),
         proj=insights.monthly_projection(cid, txns),
         txns=txns[:40],
+        # The template passed `{}` here, so every already-screened transaction on this page
+        # rendered as "Pending". Only the 40 rows actually shown are looked up.
+        decisions={t.txn_id: d for t in txns[:40]
+                   if (d := db.get_decision(t.txn_id)) is not None},
         alerts=db.list_spending_alerts(cid),
     )
 

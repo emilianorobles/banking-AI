@@ -56,6 +56,10 @@
           {% if sb_health.mode != 'off' %}
             <span class="pill pill-violet">{{ sb_health.mode|upper }}</span>
           {% endif %}
+          {% if not sb_health.rules_ok %}
+            <span class="pill pill-danger"
+                  title="{{ sb_health.rule_problems|join('; ') }}">RULE DRIFT</span>
+          {% endif %}
         </div>
         <div class="tiny dim" style="margin-top:.4rem">
           {{ sb_health.index }} cases indexed<br>{{ sb_health.model }}

@@ -403,6 +403,18 @@ def _selftest() -> int:
     print(f"DEMO_MODE={config.DEMO_MODE}  api_key={'yes' if config.has_api_key() else 'NO'}")
     db.init_db()
 
+    # Rule metadata consistency. A rule emitting an ID with no RULE_META entry raises a
+    # KeyError that evaluate() swallows, silently disabling the rule -- so the score below
+    # would be quietly wrong rather than visibly broken. Cheap to check, so check it here
+    # rather than trusting it.
+    rule_problems = rules.selfcheck()
+    if rule_problems:
+        print(f"!! rules.selfcheck() found {len(rule_problems)} problem(s):")
+        for problem in rule_problems:
+            print(f"      - {problem}")
+    else:
+        print(f"rules.selfcheck() OK -- {len(rules.RULE_META)} rule IDs consistent")
+
     demo = json.loads(config.DEMO_INJECTIONS_PATH.read_text(encoding="utf-8"))
 
     # Unfreeze the hero card first. A previous fraud injection leaves it frozen, and
@@ -425,7 +437,7 @@ def _selftest() -> int:
     else:
         print(f"(reset: unfroze {hero_id})")
 
-    failures = 0
+    failures = len(rule_problems)
 
     for scenario in demo["scenarios"]:
         payload = dict(scenario["txn"])

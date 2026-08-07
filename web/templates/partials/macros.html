@@ -80,7 +80,18 @@
 {% endmacro %}
 
 
-{# Transaction list. Every row drills into the rules that fired on it. #}
+{# Transaction list. Every row drills into the rules that fired on it.
+
+   The row itself has always been clickable, but the only affordance was a ::after badge on
+   hover -- which is invisible on a projector and undiscoverable on a touchscreen. The
+   explicit "Why?" button is the point of the whole explainability feature, so it gets a
+   control a judge can see from the back of the room. stopPropagation on the button keeps
+   the row handler from firing a second drill for the same transaction. #}
+{% macro why_button(txn_id, label='') %}
+  <button class="btn btn-sm btn-ghost nowrap" data-drill="txn:{{ txn_id }}"
+          data-drill-title="{{ label }}" onclick="event.stopPropagation()">Why?</button>
+{% endmacro %}
+
 {% macro txn_table(txns, decisions, limit=12, show_risk=True) %}
   <div class="tbl-wrap">
     <table class="tbl">
@@ -89,6 +100,7 @@
           <th>When</th><th>Merchant</th><th>Where</th>
           <th class="num">Amount</th>
           {% if show_risk %}<th>Screening</th>{% endif %}
+          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -110,9 +122,10 @@
                 {% else %}<span class="pill pill-info">Pending</span>{% endif %}
               </td>
             {% endif %}
+            <td class="num nowrap">{{ why_button(t.txn_id, t.merchant) }}</td>
           </tr>
         {% else %}
-          <tr><td colspan="{{ 5 if show_risk else 4 }}" class="dim center">No transactions yet.</td></tr>
+          <tr><td colspan="{{ 6 if show_risk else 5 }}" class="dim center">No transactions yet.</td></tr>
         {% endfor %}
       </tbody>
     </table>

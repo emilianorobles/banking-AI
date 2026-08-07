@@ -39,6 +39,91 @@ def _now() -> datetime:
 
 
 # --------------------------------------------------------------------------- #
+# Guardrail notes
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class GuardrailFacts:
+    """The explanation payloads `pipeline.py` already writes, decoded.
+
+    `pipeline.py` records genuinely useful things into `Decision.guardrail_notes` as
+    prefix-encoded strings -- which rules a travel notice suppressed, the key factors the
+    model weighed, what would have changed its mind, how much PII was tokenized -- and
+    until now **nothing in `web/` read any of it back**. The data was already in the
+    database; only the presentation was missing.
+
+    This is deliberately a READ-SIDE parser rather than new fields on `Decision`:
+
+      * `db.save_decision` does `INSERT OR REPLACE INTO decisions VALUES (...)` with no
+        column list, and `db.init_db()` is `CREATE TABLE IF NOT EXISTS`. A 24th column
+        would therefore raise `OperationalError: table decisions has 23 columns but 24
+        values supplied` on **every** `score_transaction()` for anyone who had not
+        reseeded -- and there is no migration mechanism in this project.
+      * `contracts.py` is frozen and shared by five workstreams.
+
+    Parsing what is already stored carries neither risk.
+    """
+    travel_suppressed: list[str] = field(default_factory=list)
+    key_factors: list[str] = field(default_factory=list)
+    counterfactual: str = ""
+    pii_tokenized: int = 0
+    pii_kinds: list[str] = field(default_factory=list)
+    reflection: str | None = None            # "revised" | "held"
+    json_repair_retries: int = 0
+    fabricated_citations: list[str] = field(default_factory=list)
+    dlp_redacted: list[str] = field(default_factory=list)
+    injection_blocked: list[str] = field(default_factory=list)
+    llm_unavailable: str | None = None
+    other: list[str] = field(default_factory=list)
+
+
+def _split_csv(value: str) -> list[str]:
+    return [p.strip() for p in value.split(",") if p.strip()]
+
+
+def parse_guardrail_notes(notes: list[str] | None) -> GuardrailFacts:
+    """Decode the prefix-encoded notes. Never raises.
+
+    An unparseable or unknown note lands in `other` rather than throwing: these strings
+    are the audit trail, and a note format nobody has seen before must not be able to
+    take down the explanation screen that is showing it.
+    """
+    facts = GuardrailFacts()
+    for raw in notes or []:
+        note = str(raw)
+        head, _, rest = note.partition(":")
+        try:
+            if head == "travel_suppressed":
+                facts.travel_suppressed = _split_csv(rest)
+            elif head == "factors":
+                facts.key_factors = [p.strip() for p in rest.split("|") if p.strip()]
+            elif head == "counterfactual":
+                facts.counterfactual = rest.strip()
+            elif head == "pii_tokenized":
+                # "pii_tokenized:3 (PAN, EMAIL)"
+                count, _, kinds = rest.partition("(")
+                facts.pii_tokenized = int(count.strip() or 0)
+                facts.pii_kinds = _split_csv(kinds.rstrip(") "))
+            elif head == "reflection":
+                facts.reflection = rest.strip() or None
+            elif head == "json_repair_retries":
+                facts.json_repair_retries = int(rest.strip() or 0)
+            elif head == "fabricated_citations":
+                facts.fabricated_citations = _split_csv(rest)
+            elif head == "dlp_egress_redacted":
+                facts.dlp_redacted = _split_csv(rest)
+            elif head == "prompt_injection_blocked":
+                facts.injection_blocked = _split_csv(rest)
+            elif head == "llm_unavailable":
+                facts.llm_unavailable = rest.strip() or "unknown error"
+            else:
+                facts.other.append(note)
+        except Exception:
+            facts.other.append(note)
+    return facts
+
+
+# --------------------------------------------------------------------------- #
 # Spending
 # --------------------------------------------------------------------------- #
 

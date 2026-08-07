@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import risk_pill, action_pill %}
+{% from "partials/macros.html" import risk_pill, action_pill, why_button %}
 
 {% block title %}Alert queue · SentinelBank{% endblock %}
 {% block heading %}Alert queue{% endblock %}
@@ -36,9 +36,7 @@
         <div style="min-width:0">
           <div class="row">
             {{ risk_pill(a.risk_score) }}
-            <span class="pill {{ 'pill-critical' if a.priority in ('P1', 'CRITICAL') else 'pill-warn' }}">
-              {{ a.priority }}
-            </span>
+            {% if a.region %}<span class="pill pill-info">{{ a.region }}</span>{% endif %}
             {{ action_pill(a.action) }}
             {% if d.llm_used %}
               <span class="pill pill-violet">AI analyst · {{ '{:.0%}'.format(d.confidence or 0) }} confident</span>
@@ -63,8 +61,11 @@
           </div>
         </div>
 
-        <button class="btn btn-sm nowrap" data-drill="alert:{{ a.alert_id }}"
-                data-drill-title="{{ a.alert_id }}">Full detail</button>
+        <div class="row nowrap">
+          {{ why_button(a.txn_id, t.merchant) }}
+          <button class="btn btn-sm nowrap" data-drill="alert:{{ a.alert_id }}"
+                  data-drill-title="{{ a.alert_id }}">Full detail</button>
+        </div>
       </div>
 
       <!-- rules -->

@@ -179,7 +179,15 @@
             : ""}
         </div>` : ""}
 
-      <div class="tiny dim mono" style="margin-top:.6rem">${SB.escapeHtml(d.txn_id)}</div>`;
+      <div class="between" style="margin-top:.6rem">
+        <span class="tiny dim mono">${SB.escapeHtml(d.txn_id)}</span>
+        <button class="btn btn-sm btn-ghost" data-drill="txn:${SB.escapeHtml(d.txn_id)}"
+                data-drill-title="${SB.escapeHtml(d.merchant || "")}">Why?</button>
+      </div>`;
+    /* Injected results are written straight into the DOM, so nothing has bound them --
+       wireDrilldowns() only runs on DOMContentLoaded. It is idempotent, so re-running it
+       over just this container is safe and cheap. */
+    SB.wireDrilldowns(out);
   }
 
   if (LAST && LAST.txn_id) render(LAST);

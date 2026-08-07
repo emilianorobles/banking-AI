@@ -28,9 +28,6 @@
         <div style="min-width:0">
           <div class="row">
             {{ risk_pill(a.risk_score) }}
-            <span class="pill {{ 'pill-danger' if a.priority in ('P1','CRITICAL') else 'pill-warn' }}">
-              {{ a.priority }}
-            </span>
             {% if a.status == 'PENDING' %}
               <span class="pill pill-info">Waiting on you</span>
             {% elif a.outcome == 'confirmed_fraud' %}

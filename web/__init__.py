@@ -47,14 +47,20 @@ def create_app() -> Flask:
     # ---- template globals -------------------------------------------------
     @app.context_processor
     def inject_globals():
-        from core import llm, rag
+        from core import llm, rag, rules
         user = session.get("user")
+        # Non-fatal on purpose. A rule ID that has drifted from RULE_META disables that
+        # rule silently (evaluate() swallows the KeyError), so it is worth surfacing --
+        # but not worth refusing to serve a page over, least of all mid-demo.
+        rule_problems = rules.selfcheck()
         health = {
             "mode": config.DEMO_MODE,
             "api_key": config.has_api_key(),
             "index": rag.index_size(),
             "cached": llm.cache_size(),
             "model": config.CHAT_MODEL,
+            "rules_ok": not rule_problems,
+            "rule_problems": rule_problems,
         }
         # Staff get a customer switcher in the header; a customer never does, so we do not
         # pay for the query on their pages.

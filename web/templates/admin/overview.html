@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "partials/macros.html" import stat, risk_pill, action_pill, txn_table, chart_card %}
+{% from "partials/macros.html" import stat, risk_pill, action_pill, txn_table, chart_card, why_button %}
 
 {% block title %}Fraud operations · SentinelBank{% endblock %}
 {% block heading %}Fraud operations{% endblock %}
@@ -94,12 +94,15 @@
           <div style="min-width:0">
             <div class="row">
               {{ risk_pill(a.risk_score) }}
-              <span class="pill pill-warn">{{ a.priority }}</span>
+              {% if a.region %}<span class="pill pill-info">{{ a.region }}</span>{% endif %}
               <span class="tiny dim mono">{{ a.customer_id }}</span>
             </div>
             <div class="small" style="margin-top:.3rem">{{ a.summary }}</div>
           </div>
-          <span class="tiny dim nowrap">{{ a.created_at|shortdt }}</span>
+          <div class="row nowrap">
+            <span class="tiny dim nowrap">{{ a.created_at|shortdt }}</span>
+            {{ why_button(a.txn_id, t.merchant if t else a.txn_id) }}
+          </div>
         </div>
       {% else %}
         <div class="note note-ok">Nothing pending in {{ region|lower }}.</div>
