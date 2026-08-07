@@ -159,13 +159,21 @@ def init_db() -> None:
 
 
 def reset_db() -> None:
-    """Drop everything. Used by the Reset Demo button."""
+    """Drop everything. Used by the Reset Demo button.
+
+    Every table, not a hand-maintained subset. A table added later and forgotten here is a
+    reset that silently is not one -- the notification centre kept showing fifteen unread
+    alerts from the previous rehearsal, because `notifications` and `spending_alerts` were
+    added after this list was written and nobody updated it. Enumerating from
+    `sqlite_master` means the next table to be added cannot be missed.
+    """
     with connect() as conn:
-        for table in (
-            "customers", "transactions", "decisions", "alerts",
-            "travel_notices", "audit_log", "llm_telemetry", "fraud_cases", "counters",
-        ):
-            conn.execute(f"DROP TABLE IF EXISTS {table}")
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+        for row in rows:
+            conn.execute(f'DROP TABLE IF EXISTS "{row["name"]}"')
         conn.executescript(SCHEMA)
 
 

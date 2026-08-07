@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import money_stat, chart_card %}
+
+{% block title %}Statements · SentinelBank{% endblock %}
+{% block heading %}Statements{% endblock %}
+{% block subheading %}Generated from your actual transaction records, not a template.{% endblock %}
+
+{% block content %}
+
+<section class="grid g4" style="margin-bottom:var(--s-3)">
+  {{ money_stat('This month', proj.spent_so_far|money(proj.currency),
+                proj.days_elapsed ~ ' days in', 'spend:_total', '📅') }}
+  {{ money_stat('Last 30 days', spend.total_30d|money(spend.currency),
+                spend.transaction_count_30d ~ ' transactions', '', '💳') }}
+  {{ money_stat('Last 90 days', spend.total_90d|money(spend.currency),
+                'across ' ~ spend.by_category|length ~ ' categories', '', '📊') }}
+  {{ money_stat('Largest single', spend.largest_30d|money(spend.currency),
+                'in the last 30 days', '', '⬆️') }}
+</section>
+
+<section class="split" style="margin-bottom:var(--s-3)">
+  <div class="glass card">
+    <div class="between" style="margin-bottom:.6rem">
+      <div>
+        <div class="label">Account statement</div>
+        <div class="tiny dim">The same document the assistant sends when you ask it for one.</div>
+      </div>
+      <div class="row">
+        <button class="btn btn-sm" id="copy-stmt" type="button">Copy</button>
+        <a class="btn btn-sm btn-primary" href="{{ url_for('customer.statement_download') }}">
+          ⬇ Download
+        </a>
+      </div>
+    </div>
+    <pre class="code scroll-y" id="stmt" style="max-height:520px">{{ statement }}</pre>
+  </div>
+
+  <div class="stack">
+    {{ chart_card('Category split', 'stmt-donut', 'last 90 days') }}
+
+    <div class="glass card">
+      <div class="label">Ask for it instead</div>
+      <div class="small muted" style="margin:.4rem 0 .7rem">
+        The assistant can pull a statement, and a copy of the notification lands in your
+        inbox so there is a record that it was issued.
+      </div>
+      <button class="btn btn-primary btn-block" data-ask="Send me my account statement">
+        📄 Ask the assistant for my statement
+      </button>
+    </div>
+  </div>
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const CATS = {{ spend.by_category[:8]|tojson }};
+  SBCharts.donut(
+    document.getElementById("stmt-donut"),
+    CATS.map(([label, value]) => ({ label, value })),
+    { centreLabel: SBCharts.fmt(CATS.reduce((a, c) => a + c[1], 0)), centreSub: "90 days" }
+  );
+
+  document.getElementById("copy-stmt").addEventListener("click", () => {
+    navigator.clipboard.writeText(document.getElementById("stmt").textContent)
+      .then(() => SB.toast("Copied", "Statement copied to your clipboard.", "ok"))
+      .catch(() => SB.toast("Couldn't copy", "Select the text and copy manually.", "warn"));
+  });
+</script>
+{% endblock %}

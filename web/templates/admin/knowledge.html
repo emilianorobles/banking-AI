@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import stat, chart_card %}
+
+{% block title %}Knowledge store · SentinelBank{% endblock %}
+{% block heading %}Knowledge store{% endblock %}
+{% block subheading %}
+  The precedents the AI analyst reasons from — and the ones your own analysts have taught it.
+{% endblock %}
+
+{% block content %}
+
+<section class="grid g4" style="margin-bottom:var(--s-3)">
+  {{ stat('Cases indexed', index_size, 'vectors in FAISS', '', '📚') }}
+  {{ stat('Learned from analysts', learned|length, 'written back from resolved alerts', '', '🎓') }}
+  {{ stat('Seeded corpus', (cases|length) - (learned|length), 'historical cases', '', '🗄️') }}
+  {{ stat('Index consistent',
+          'Yes' if consistency.consistent else 'No',
+          'FAISS and SQLite agree' if consistency.consistent else 'mismatch — rebuild needed',
+          '', '🔍') }}
+</section>
+
+{% if not consistency.consistent %}
+  <div class="note note-danger" style="margin-bottom:var(--s-3)">
+    <strong>The index and its SQLite mirror disagree.</strong>
+    {{ consistency.detail if consistency.detail else '' }}
+    Run a full reset from Demo control, which rebuilds the index — a learned case that
+    exists in one store and not the other produces citations that will not resolve.
+  </div>
+{% endif %}
+
+<section class="split" style="margin-bottom:var(--s-3)">
+  <div class="glass card">
+    <div class="label">Search the store</div>
+    <div class="tiny dim">
+      Exactly the retrieval the agent runs — same embeddings, same index.
+    </div>
+    <form method="get" class="row" style="margin-top:.7rem">
+      <input type="text" name="q" value="{{ query }}" style="flex:1"
+             placeholder="e.g. card testing at an online electronics merchant abroad">
+      <button class="btn btn-primary">Search</button>
+    </form>
+
+    {% if query %}
+      <div class="stack" style="margin-top:.8rem">
+        {% for h in hits %}
+          <div class="glass-2 card-tight" style="border-radius:var(--r-sm)">
+            <div class="row">
+              <span class="mono tiny">{{ h.case_id }}</span>
+              <span class="pill {{ 'pill-danger' if h.outcome == 'confirmed_fraud' else 'pill-ok' }}">
+                {{ h.outcome.replace('_', ' ') if h.outcome }}
+              </span>
+              <span class="pill pill-info">{{ '{:.3f}'.format(h.similarity or 0) }}</span>
+            </div>
+            <div class="small" style="margin-top:.3rem">{{ h.title }}</div>
+          </div>
+        {% else %}
+          <div class="note note-warn">Nothing matched that query.</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+  {{ chart_card('Corpus balance', 'balance-chart',
+                'fraud vs false positive — retrieval queries both sides separately') }}
+</section>
+
+{% if learned %}
+  <section class="glass card" style="margin-bottom:var(--s-3)">
+    <div class="label">Learned from your analysts</div>
+    <div class="tiny dim">
+      Each of these started as an alert a human resolved. They are retrievable immediately —
+      the loop closes without a retraining step.
+    </div>
+    <div class="stack" style="margin-top:.7rem">
+      {% for c in learned[:12] %}
+        <div class="glass-2 card-tight" style="border-radius:var(--r-sm)">
+          <div class="row">
+            <span class="mono tiny">{{ c.case_id }}</span>
+            <span class="pill {{ 'pill-danger' if c.outcome == 'confirmed_fraud' else 'pill-ok' }}">
+              {{ c.outcome.replace('_', ' ') }}
+            </span>
+            <span class="pill pill-violet">learned</span>
+            <span class="tiny dim">{{ c.created_at|shortdt }}</span>
+          </div>
+          <div class="small" style="margin-top:.3rem">{{ c.title }}</div>
+          <div class="tiny dim" style="margin-top:.2rem">{{ c.narrative[:260] }}…</div>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+{% endif %}
+
+<section class="glass card">
+  <div class="label">Seeded corpus</div>
+  <div class="tbl-wrap" style="margin-top:.6rem">
+    <table class="tbl">
+      <thead><tr><th>Case</th><th>Title</th><th>Outcome</th><th>Region</th>
+                 <th>Channel</th><th>Band</th><th>Source</th></tr></thead>
+      <tbody>
+        {% for c in cases[:60] %}
+          <tr>
+            <td class="mono tiny">{{ c.case_id }}</td>
+            <td class="small">{{ c.title }}</td>
+            <td>
+              <span class="pill {{ 'pill-danger' if c.outcome == 'confirmed_fraud' else 'pill-ok' }}">
+                {{ c.outcome.replace('_', ' ') }}
+              </span>
+            </td>
+            <td class="tiny dim">{{ c.region }}</td>
+            <td class="tiny dim">{{ c.channel }}</td>
+            <td class="tiny dim">{{ c.amount_band }}</td>
+            <td class="tiny dim">{{ c.source }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const FRAUD = {{ cases|selectattr('outcome', 'equalto', 'confirmed_fraud')|list|length }};
+  const FP = {{ cases|rejectattr('outcome', 'equalto', 'confirmed_fraud')|list|length }};
+
+  SBCharts.donut(document.getElementById("balance-chart"), [
+    { label: "Confirmed fraud", value: FRAUD, colour: "var(--danger)" },
+    { label: "False positive", value: FP, colour: "var(--ok)" },
+  ], { centreLabel: FRAUD + FP, centreSub: "cases" });
+
+  const host = document.getElementById("balance-chart");
+  const note = document.createElement("div");
+  note.className = "note small";
+  note.style.marginTop = ".7rem";
+  note.innerHTML =
+    "A corpus like this leans toward fraud, as any real bank's would. Plain top-k " +
+    "similarity therefore returned three fraud precedents for almost anything flagged, and " +
+    "the agent reasoned faithfully from one-sided evidence. <code class='mono'>" +
+    "rag.search_balanced()</code> queries both outcomes separately and merges — the " +
+    "evaluation harness is what caught this.";
+  host.appendChild(note);
+</script>
+{% endblock %}

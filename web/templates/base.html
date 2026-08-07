@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}SentinelBank{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/glass.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+  {% block head %}{% endblock %}
+</head>
+<body data-poll="1">
+<div class="shell">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">🛡️</span>
+      <span>Sentinel<span class="dim">Bank</span></span>
+    </div>
+
+    {% set r = user.role if user else 'customer' %}
+
+    <nav class="nav">
+      <div class="label nav-title">Your account</div>
+      <a href="{{ url_for('customer.dashboard') }}"  class="{{ 'active' if active == 'dashboard' }}">🏠 <span>Dashboard</span></a>
+      <a href="{{ url_for('customer.spending') }}"   class="{{ 'active' if active == 'spending' }}">📊 <span>Spending</span></a>
+      <a href="{{ url_for('customer.security') }}"   class="{{ 'active' if active == 'security' }}">🔐 <span>Security</span></a>
+      <a href="{{ url_for('customer.travel_page') }}" class="{{ 'active' if active == 'travel' }}">✈️ <span>Travel</span></a>
+      <a href="{{ url_for('customer.alerts') }}"     class="{{ 'active' if active == 'alerts' }}">🚨 <span>Alerts</span></a>
+      <a href="{{ url_for('customer.statements') }}" class="{{ 'active' if active == 'statements' }}">📄 <span>Statements</span></a>
+      <a href="{{ url_for('notifications.centre') }}" class="{{ 'active' if active == 'notifications' }}">🔔 <span>Notifications</span></a>
+
+      {% if r in ('analyst', 'admin') %}
+        <div class="label nav-title">Fraud operations</div>
+        <a href="{{ url_for('admin.overview') }}"   class="{{ 'active' if active == 'ops' }}">📈 <span>Overview</span></a>
+        <a href="{{ url_for('admin.alert_queue') }}" class="{{ 'active' if active == 'queue' }}">🚨 <span>Alert queue</span></a>
+        <a href="{{ url_for('admin.cost') }}"       class="{{ 'active' if active == 'cost' }}">💰 <span>Cost &amp; performance</span></a>
+        <a href="{{ url_for('admin.evaluation_page') }}" class="{{ 'active' if active == 'eval' }}">🧪 <span>Evaluation</span></a>
+        <a href="{{ url_for('admin.knowledge') }}"  class="{{ 'active' if active == 'knowledge' }}">📚 <span>Knowledge store</span></a>
+        <a href="{{ url_for('admin.audit') }}"      class="{{ 'active' if active == 'audit' }}">🔍 <span>Audit log</span></a>
+      {% endif %}
+
+      {% if r == 'admin' %}
+        <div class="label nav-title">Presenter</div>
+        <a href="{{ url_for('demo.control') }}" class="{{ 'active' if active == 'demo' }}">🎬 <span>Demo control</span></a>
+      {% endif %}
+    </nav>
+
+    <div style="margin-top:auto" class="stack">
+      <div class="glass card-tight" style="border-radius:var(--r-sm)">
+        <div class="label">System</div>
+        <div class="row tiny" style="margin-top:.35rem;gap:.3rem">
+          <span class="pill {{ 'pill-ok' if sb_health.api_key else 'pill-warn' }}">
+            {{ 'LIVE' if sb_health.api_key else 'RULES ONLY' }}
+          </span>
+          {% if sb_health.mode != 'off' %}
+            <span class="pill pill-violet">{{ sb_health.mode|upper }}</span>
+          {% endif %}
+        </div>
+        <div class="tiny dim" style="margin-top:.4rem">
+          {{ sb_health.index }} cases indexed<br>{{ sb_health.model }}
+        </div>
+      </div>
+
+      {% if user %}
+        <div class="between">
+          <div style="min-width:0">
+            <div class="small" style="font-weight:700">{{ user.label }}</div>
+            <div class="tiny dim">{{ user.username }}</div>
+          </div>
+          <a class="btn btn-sm btn-ghost" href="{{ url_for('auth.logout') }}">Sign out</a>
+        </div>
+      {% endif %}
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="between" style="margin-bottom:var(--s-3)">
+      <div style="min-width:0">
+        <h1 style="margin:0">{% block heading %}{% endblock %}</h1>
+        <div class="small muted">{% block subheading %}{% endblock %}</div>
+      </div>
+
+      <div class="row">
+        {% if user and user.role in ('analyst', 'admin') and active_customer_id %}
+          <form method="post" action="{{ url_for('auth.switch_customer') }}" class="row" style="gap:.3rem">
+            <span class="label">Viewing</span>
+            <select name="customer_id" onchange="this.form.submit()" style="width:auto">
+              {% for c in all_customers %}
+                <option value="{{ c.customer_id }}" {{ 'selected' if c.customer_id == active_customer_id }}>
+                  {{ c.name }} · {{ c.customer_id }}
+                </option>
+              {% endfor %}
+            </select>
+          </form>
+        {% endif %}
+
+        <button class="eye" data-eye type="button" aria-label="Show balance">👁</button>
+
+        <a class="btn btn-sm" href="{{ url_for('notifications.centre') }}" style="position:relative">
+          🔔
+          <span id="notif-badge" class="pill pill-danger hidden"
+                style="position:absolute;top:-7px;right:-7px;padding:.05rem .35rem;font-size:.6rem"></span>
+        </a>
+      </div>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="stack" style="margin-bottom:var(--s-3)">
+          {% for category, message in messages %}
+            <div class="note note-{{ 'danger' if category == 'danger' else 'warn' if category == 'warn' else 'ok' if category == 'ok' else '' }}">
+              {{ message }}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+{% if user %}{% include "partials/chat_widget.html" %}{% endif %}
+
+<div class="toast-host" id="toast-host"></div>
+<div class="modal-host" id="modal-host"></div>
+
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+
+{% block title %}Demo control · SentinelBank{% endblock %}
+{% block heading %}Demo control{% endblock %}
+{% block subheading %}
+  Everything on stage is a button. Nothing is typed live — a typo in front of judges costs
+  forty seconds and all your momentum.
+{% endblock %}
+
+{% block content %}
+
+{% if not demo %}
+  <div class="note note-danger">
+    No demo scenarios found. Run <span class="mono">python -m data.generate</span>.
+  </div>
+{% else %}
+
+<!-- ------------------------------------------------------------- pre-flight -->
+<section class="glass card" style="margin-bottom:var(--s-3)">
+  <div class="between" style="align-items:flex-start">
+    <div>
+      <div class="label">Pre-flight</div>
+      <div class="small muted" style="margin-top:.3rem">
+        Two stateful traps break the demo silently. Injecting fraud <strong>freezes the
+        hero's card</strong>, and <span class="mono tiny">CARD_ALREADY_FROZEN</span> is +60 —
+        so every later beat scores ~100 and all of them look like fraud. A reseed
+        <strong>wipes the travel notice</strong>, so the Spain beat stops testing suppression
+        at all. This button fixes both and tells you what it changed.
+      </div>
+    </div>
+    <button class="btn btn-primary nowrap" id="preflight-btn">✈️ Run pre-flight check</button>
+  </div>
+
+  <div class="grid g4" style="margin-top:.9rem">
+    <div class="glass-2 card-tight" style="border-radius:var(--r-sm)">
+      <div class="label">Hero card</div>
+      <div class="row" style="margin-top:.3rem">
+        {% if customer and customer.card_frozen %}
+          <span class="pill pill-danger">FROZEN — fix before demo</span>
+        {% else %}
+          <span class="pill pill-ok">Active</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="glass-2 card-tight" style="border-radius:var(--r-sm)">
+      <div class="label">Travel notice</div>
+      <div class="row" style="margin-top:.3rem">
+        {% if notices %}
+          <span class="pill pill-ok">{{ notices[0].countries|join(', ') }} on file</span>
+        {% else %}
+          <span class="pill pill-warn">MISSING — file before demo</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="glass-2 card-tight" style="border-radius:var(--r-sm)">
+      <div class="label">Knowledge store</div>
+      <div class="row" style="margin-top:.3rem">
+        <span class="pill {{ 'pill-ok' if index_size else 'pill-danger' }}">{{ index_size }} cases</span>
+        <span class="pill pill-violet">{{ learned }} learned</span>
+      </div>
+    </div>
+    <div class="glass-2 card-tight" style="border-radius:var(--r-sm)">
+      <div class="label">Provider</div>
+      <div class="row" style="margin-top:.3rem">
+        <span class="pill {{ 'pill-ok' if has_key else 'pill-warn' }}">
+          {{ 'live' if has_key else 'rules only' }}
+        </span>
+        <span class="pill pill-violet">{{ mode }}</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:.9rem">
+    <form method="post" action="{{ url_for('demo.file_travel_notice') }}">
+      <button class="btn btn-sm">✈️ File travel notice (Spain)</button>
+    </form>
+    <form method="post" action="{{ url_for('demo.unfreeze_hero') }}">
+      <button class="btn btn-sm">🔓 Unfreeze hero card</button>
+    </form>
+    <button class="btn btn-sm btn-danger" id="reset-btn">♻️ Full reset (~40s, needs the API)</button>
+    <span class="tiny dim">{{ pending }} alerts pending</span>
+  </div>
+</section>
+
+<!-- -------------------------------------------------------------- scenarios -->
+<section class="split">
+  <div class="glass card">
+    <div class="label">Scripted scenarios</div>
+    <div class="small muted" style="margin:.3rem 0 .8rem">
+      For <strong>{{ demo.hero_customer_name }}</strong>
+      (<span class="mono tiny">{{ demo.hero_customer_id }}</span>).
+      Each one posts through the same pipeline a real transaction takes.
+      Run them in order — beat 5 only lands if an analyst has confirmed beat 4.
+    </div>
+
+    <div class="stack">
+      {% for s in demo.scenarios %}
+        <div class="glass-2 card-tight between" style="border-radius:var(--r-sm);gap:var(--s-2)">
+          <div style="min-width:0">
+            <div class="row">
+              <span class="pill {{ 'pill-danger' if 'FRAUD' in s.label else 'pill-critical' if 'ATTACK' in s.label else 'pill-ok' }}">
+                {{ loop.index }}
+              </span>
+              <span class="small" style="font-weight:600">{{ s.label }}</span>
+            </div>
+            <div class="tiny dim" style="margin-top:.25rem">
+              {{ s.txn.amount|money2(s.txn.currency) }} · {{ s.txn.merchant }} ·
+              {{ s.txn.city }}, {{ s.txn.country }} · expect
+              <span class="mono">{{ s.expect }}</span>
+            </div>
+          </div>
+          <button class="btn btn-sm btn-primary nowrap inject" data-index="{{ loop.index0 }}">
+            ▶ Inject
+          </button>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="glass card">
+    <div class="between">
+      <div class="label">Last result</div>
+      <a class="btn btn-sm" href="{{ url_for('admin.alert_queue') }}">Open the queue →</a>
+    </div>
+    <div id="result" style="margin-top:.7rem">
+      {% if last %}
+        <div class="dim small">Showing the last injection from this session.</div>
+      {% else %}
+        <div class="note">Inject a scenario and the pipeline stages appear here as they run.</div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const LAST = {{ (last or {})|tojson }};
+  const out = document.getElementById("result");
+
+  function render(d) {
+    const stopped = ["FREEZE_AND_ESCALATE", "QUARANTINE"].includes(d.action);
+    out.innerHTML = `
+      <div class="row" style="margin-bottom:.6rem">
+        <span class="pill ${d.risk_score >= 70 ? "pill-danger" : d.risk_score >= 30 ? "pill-warn" : "pill-ok"}">
+          Risk ${d.risk_score}
+        </span>
+        <span class="pill ${stopped ? "pill-danger" : d.action === "CHALLENGE" ? "pill-warn" : "pill-ok"}">
+          ${SB.escapeHtml(d.action)}
+        </span>
+        ${d.llm_used ? '<span class="pill pill-violet">AI analyst</span>'
+                     : '<span class="pill pill-info">rules only · no cost</span>'}
+        ${d.suppressed_by_travel ? '<span class="pill pill-ok">travel notice applied</span>' : ""}
+        ${d.injection_detected ? '<span class="pill pill-critical">prompt injection</span>' : ""}
+        <span class="pill pill-info">${d.latency_ms} ms</span>
+      </div>
+
+      <div class="small" style="font-weight:600">${SB.escapeHtml(d.label || "")}</div>
+      <div class="tiny dim">${SB.escapeHtml(d.amount)} · ${SB.escapeHtml(d.merchant)} · ${SB.escapeHtml(d.where)}</div>
+
+      ${d.steps && d.steps.length ? `
+        <div class="label" style="margin-top:.8rem">Pipeline stages</div>
+        <pre class="code" style="margin-top:.3rem">${d.steps.map(s => "→ " + SB.escapeHtml(s)).join("\n")}</pre>` : ""}
+
+      ${d.rule_hits && d.rule_hits.length ? `
+        <div class="label" style="margin-top:.8rem">Rules that fired</div>
+        <div class="row" style="margin-top:.3rem">
+          ${d.rule_hits.map(h => `<span class="pill pill-warn">${SB.escapeHtml(h.rule_id)} +${h.weight}</span>`).join("")}
+        </div>` : ""}
+
+      ${d.reasoning ? `
+        <div class="note" style="margin-top:.8rem">
+          <div class="label" style="margin-bottom:.2rem">Reasoning</div>
+          <div class="small">${SB.escapeHtml(d.reasoning)}</div>
+          ${d.cited_case_ids && d.cited_case_ids.length
+            ? `<div class="tiny dim" style="margin-top:.35rem">Cited ${d.cited_case_ids.map(SB.escapeHtml).join(", ")}</div>`
+            : ""}
+        </div>` : ""}
+
+      <div class="tiny dim mono" style="margin-top:.6rem">${SB.escapeHtml(d.txn_id)}</div>`;
+  }
+
+  if (LAST && LAST.txn_id) render(LAST);
+
+  document.querySelectorAll(".inject").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const i = btn.dataset.index;
+      document.querySelectorAll(".inject").forEach(b => b.disabled = true);
+      btn.textContent = "⏳ Scoring…";
+      out.innerHTML = '<div class="note">Scoring through the live pipeline…</div>';
+      try {
+        const d = await SB.postJSON(`/demo/inject/${i}`);
+        render(d);
+        SB.toast(d.action.replace(/_/g, " "), `Risk ${d.risk_score} · ${d.latency_ms} ms`,
+                 d.risk_score >= 70 ? "danger" : d.risk_score >= 30 ? "warn" : "ok");
+      } catch (err) {
+        out.innerHTML = `<div class="note note-danger">${SB.escapeHtml(err.message)}</div>`;
+      } finally {
+        document.querySelectorAll(".inject").forEach(b => b.disabled = false);
+        btn.textContent = "▶ Inject";
+      }
+    });
+  });
+
+  document.getElementById("preflight-btn").addEventListener("click", async e => {
+    e.target.disabled = true;
+    try {
+      const d = await SB.postJSON("/demo/preflight");
+      SB.openModal(
+        `<h4>What changed</h4>
+         <ul>${d.changes.map(c => `<li>${SB.escapeHtml(c)}</li>`).join("")}</ul>
+         <h4 style="margin-top:1rem">State now</h4>
+         <dl class="kv">
+           <dt>Index</dt><dd>${d.index_size} cases</dd>
+           <dt>Pending alerts</dt><dd>${d.pending_alerts}</dd>
+           <dt>Mode</dt><dd>${SB.escapeHtml(d.mode)}</dd>
+           <dt>API key</dt><dd>${d.has_key ? "present" : "missing"}</dd>
+         </dl>`,
+        { title: "Pre-flight complete" }
+      );
+      setTimeout(() => location.reload(), 2200);
+    } catch (err) {
+      SB.toast("Pre-flight failed", err.message, "danger");
+    } finally {
+      e.target.disabled = false;
+    }
+  });
+
+  document.getElementById("reset-btn").addEventListener("click", async e => {
+    if (!confirm("Full reset wipes transactions, alerts and learned cases, then rebuilds the index. Takes about 40 seconds. Continue?")) return;
+    e.target.disabled = true;
+    e.target.textContent = "♻️ Reseeding…";
+    try {
+      const d = await SB.postJSON("/demo/reset");
+      SB.openModal(
+        `<p>${d.scored.toLocaleString()} transactions scored, ${d.cases} cases indexed.</p>
+         <div class="note note-warn">${SB.escapeHtml(d.warning)}</div>`,
+        { title: "Reset complete" }
+      );
+      setTimeout(() => location.reload(), 3000);
+    } catch (err) {
+      SB.toast("Reset failed", err.message, "danger", 12000);
+      e.target.disabled = false;
+      e.target.textContent = "♻️ Full reset (~40s, needs the API)";
+    }
+  });
+</script>
+{% endblock %}

@@ -16,6 +16,7 @@ card on its own.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -93,11 +94,57 @@ def _parse(text: str) -> dict[str, Any]:
     """Extract the agent's JSON decision, tolerating fences and stray prose."""
     from .fraud_analyst import extract_json
     try:
-        return extract_json(text)
+        return _normalise(extract_json(text))
     except Exception:
         # The model answered in plain prose. Treat that as a direct answer rather
         # than failing the turn -- a slightly unstructured reply beats an error.
         return {"action": "answer", "say": text.strip()}
+
+
+def _chat_cache_key(intent: str, message: str, step: int) -> str:
+    """A stable key for the offline replay cache.
+
+    The default key hashes the whole prompt, which for this agent is fatal to the offline
+    fallback: the system prompt embeds `date.today()`, so a cache recorded on Thursday
+    misses on Friday, and the user prompt carries the conversation history, so the same
+    question keyed differently depending on what was asked before it. Both mean the
+    recorded chat beats silently fail to replay on the one occasion they exist for.
+
+    Keying on intent + the normalised question + which step of the tool loop we are on
+    gives the same question the same key on any day, in any conversation.
+    """
+    normalised = " ".join((message or "").lower().split())
+    digest = hashlib.sha256(f"{intent}\x00{normalised}\x00{step}".encode()).hexdigest()
+    return "chat-" + digest[:20]
+
+
+def _normalise(decision: dict[str, Any]) -> dict[str, Any]:
+    """Repair the two ways the model reliably gets the envelope wrong.
+
+    It routinely returns `{"action": "freeze_card", "tool": "freeze_card", ...}` instead of
+    the literal `{"action": "tool", "tool": "freeze_card", ...}` the prompt asks for, and
+    occasionally drops `tool` and leaves only the name in `action`. Both are unambiguous --
+    the intent is a named, registered tool -- so we repair rather than fail.
+
+    Getting this wrong is not cosmetic: the turn falls through to the prose branch with an
+    empty `say`, the customer is told "could you rephrase that", and a request to freeze a
+    stolen card silently does nothing. Same reasoning as the JSON repair-retry on the fraud
+    path -- structured output through this proxy drifts, so validate the shape rather than
+    trusting it.
+    """
+    if not isinstance(decision, dict):
+        return {"action": "answer", "say": str(decision)}
+
+    action = str(decision.get("action", "")).strip()
+    named = str(decision.get("tool", "")).strip()
+
+    if action == "tool":
+        return decision
+    if action in tools.REGISTRY:
+        return {**decision, "action": "tool", "tool": named or action}
+    if named in tools.REGISTRY and action in ("", "call", "call_tool", "use_tool", "function"):
+        return {**decision, "action": "tool", "tool": named}
+    return decision
 
 
 _STALL_RE = re.compile(
@@ -195,9 +242,10 @@ def respond(
     citations: list[str] = []
     stall_retries = 0
 
-    for _ in range(MAX_STEPS):
+    for step in range(MAX_STEPS):
         try:
-            text, _tel = llm.chat(system, user_prompt, agent="customer_agent")
+            text, _tel = llm.chat(system, user_prompt, agent="customer_agent",
+                                  cache_key=_chat_cache_key(intent, message, step))
         except llm.LLMUnavailable as exc:
             return AgentReply(
                 text=("I can't reach the assistant service right now. Your account and "

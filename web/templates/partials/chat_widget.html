@@ -1,0 +1,186 @@
+{# The agent, available on every page. It is not a help bot: it holds tools that move real
+   state, so anything irreversible comes back as a proposal with a Confirm button rather
+   than as a done deal. #}
+<button class="chat-fab" id="chat-fab" type="button" aria-label="Open assistant">💬</button>
+
+<section class="chat-panel" id="chat-panel" aria-label="SentinelBank assistant">
+  <header class="chat-head">
+    <div>
+      <div style="font-weight:800">SentinelBank Assistant</div>
+      <div class="tiny dim" id="chat-status">Can act on your account · every action is logged</div>
+    </div>
+    <button class="x" id="chat-close" type="button" aria-label="Close">&times;</button>
+  </header>
+
+  <div class="chat-log" id="chat-log">
+    <div class="msg bot">
+      Hello. I can check your balance and recent activity, freeze or unfreeze your card,
+      raise a dispute, file a travel notice, plan a travel budget, pull a statement, or
+      run a security review.<br><br>
+      <span class="dim small">Anything that changes your account asks you to confirm first.</span>
+    </div>
+  </div>
+
+  <div class="chat-quick">
+    <button class="btn btn-sm" data-q="How is my account looking?">Account health</button>
+    <button class="btn btn-sm" data-q="Run a security review on my account">Security review</button>
+    <button class="btn btn-sm" data-q="Show my recent transactions">Recent activity</button>
+    <button class="btn btn-sm" data-q="I'm going to Spain for 8 days, plan my budget">Travel budget</button>
+    <button class="btn btn-sm" data-q="Send me my statement">Statement</button>
+    <button class="btn btn-sm" data-q="Freeze my card, I think it's been stolen">Block card</button>
+  </div>
+
+  <form class="chat-foot" id="chat-form">
+    <input type="text" id="chat-input" placeholder="Ask, or tell me what to do…"
+           autocomplete="off" aria-label="Message">
+    <button class="btn btn-primary" type="submit" id="chat-send">Send</button>
+  </form>
+</section>
+
+<script>
+(function () {
+  const fab   = document.getElementById("chat-fab");
+  const panel = document.getElementById("chat-panel");
+  const log   = document.getElementById("chat-log");
+  const form  = document.getElementById("chat-form");
+  const input = document.getElementById("chat-input");
+  const send  = document.getElementById("chat-send");
+  const status= document.getElementById("chat-status");
+  if (!fab) return;
+
+  let busy = false;
+
+  function open()  { panel.classList.add("open"); fab.style.display = "none"; input.focus(); }
+  function close() { panel.classList.remove("open"); fab.style.display = ""; }
+  fab.addEventListener("click", open);
+  document.getElementById("chat-close").addEventListener("click", close);
+
+  function bubble(cls, html) {
+    const d = document.createElement("div");
+    d.className = "msg " + cls;
+    d.innerHTML = html;
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+    return d;
+  }
+
+  function typing() {
+    const d = document.createElement("div");
+    d.className = "msg bot typing";
+    d.innerHTML = "<span></span><span></span><span></span>";
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+    return d;
+  }
+
+  /* An approval-gated tool comes back as a proposal. The customer decides. */
+  function approvalCard(call) {
+    const args = Object.entries(call.arguments || {})
+      .map(([k, v]) => `<div><span class="dim">${SB.prettyKey(k)}:</span> ${SB.escapeHtml(String(v))}</div>`)
+      .join("");
+    const d = document.createElement("div");
+    d.className = "msg bot";
+    d.innerHTML =
+      `<div class="note note-warn" style="margin:-.1rem 0 .5rem">
+         <strong>Confirm before I do this</strong>
+         <div class="tiny" style="margin-top:.3rem">
+           <code class="mono">${SB.escapeHtml(call.tool_name)}</code>
+         </div>
+         <div class="tiny" style="margin-top:.3rem">${args || '<span class="dim">no parameters</span>'}</div>
+       </div>
+       <div class="row">
+         <button class="btn btn-sm btn-ok" data-approve>Yes, do it</button>
+         <button class="btn btn-sm btn-ghost" data-cancel>Cancel</button>
+       </div>`;
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+
+    d.querySelector("[data-approve]").addEventListener("click", () => {
+      d.querySelectorAll("button").forEach(b => b.disabled = true);
+      turn(null, call);
+    });
+    d.querySelector("[data-cancel]").addEventListener("click", () => {
+      d.querySelectorAll("button").forEach(b => b.disabled = true);
+      bubble("bot", "Cancelled — nothing was changed.");
+    });
+  }
+
+  function notes(list) {
+    if (!list || !list.length) return;
+    const d = document.createElement("div");
+    d.className = "msg-notes";
+    d.innerHTML = list.map(n => `<span>🛡️ ${SB.escapeHtml(n)}</span>`).join("");
+    log.appendChild(d);
+  }
+
+  async function turn(text, approve) {
+    if (busy) return;
+    busy = true; send.disabled = true;
+    const t = typing();
+    status.textContent = "Thinking…";
+
+    try {
+      const data = await SB.postJSON("/api/agent/chat", {
+        message: text || "", approve_tool: approve ? approve.tool_name : null,
+        approve_args: approve ? approve.arguments : null,
+      });
+      t.remove();
+
+      if (data.text) bubble("bot", data.html || SB.escapeHtml(data.text).replace(/\n/g, "<br>"));
+
+      (data.tool_calls || []).forEach(c => {
+        if (c.requires_approval && c.approved === null) approvalCard(c);
+      });
+
+      if (data.citations && data.citations.length) {
+        bubble("bot", `<span class="tiny dim">Cited: ${data.citations.map(SB.escapeHtml).join(", ")}</span>`);
+      }
+      notes(data.guardrail_notes);
+
+      if (data.refresh) setTimeout(() => location.reload(), 1400);
+      status.textContent = data.latency_ms
+        ? `Answered in ${(data.latency_ms / 1000).toFixed(1)}s · every action is logged`
+        : "Can act on your account · every action is logged";
+    } catch (err) {
+      t.remove();
+      bubble("bot", `<span class="pill pill-danger">Error</span> ${SB.escapeHtml(err.message)}`);
+      status.textContent = "Something went wrong";
+    } finally {
+      busy = false; send.disabled = false; input.focus();
+    }
+  }
+
+  form.addEventListener("submit", e => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    bubble("user", SB.escapeHtml(text));
+    input.value = "";
+    turn(text, null);
+  });
+
+  document.querySelectorAll(".chat-quick [data-q]").forEach(b => {
+    b.addEventListener("click", () => {
+      const q = b.dataset.q;
+      bubble("user", SB.escapeHtml(q));
+      turn(q, null);
+    });
+  });
+
+  /* Deep link: anything with data-ask opens the assistant pre-loaded with a question.
+     Delegated rather than bound per element so buttons rendered later still work. */
+  function ask(question) {
+    if (!question) return;
+    open();
+    bubble("user", SB.escapeHtml(question));
+    turn(question, null);
+  }
+
+  document.addEventListener("click", e => {
+    const node = e.target.closest("[data-ask]");
+    if (node) { e.preventDefault(); ask(node.dataset.ask); }
+  });
+
+  window.SBChat = { open, close, ask };
+})();
+</script>

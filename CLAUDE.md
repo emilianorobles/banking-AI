@@ -54,16 +54,18 @@ All of this is already handled in `core/llm.py`. **Use `get_llm()` / `get_embedd
 Get your key from `APIKey.xlsx`. **Never hardcode it.** Note: `Creating_RAG.pdf` page 3 contains a live
 hardcoded key — that is an anti-pattern we deliberately do not copy.
 
-**4. SQLite runs in WAL mode** because Streamlit and FastAPI both write to it. Already set in `core/db.py`.
+**4. SQLite runs in WAL mode** because the web app, the ingestion endpoint and the eval
+harness all write to it. Already set in `core/db.py`.
 
 ---
 
 ## Architecture
 
 ```
-Streamlit app.py (Customer · Analyst · Admin portals)  ──┐
-FastAPI api/main.py  POST /api/transactions ────────────┤
-                                                        ▼
+Flask web/ (Customer · Analyst · Admin portals + chat agent)  ──┐
+POST /api/transactions   (Flask web/routes/ingest.py           │
+                          or FastAPI api/main.py) ─────────────┤
+                                                               ▼
                                           core/pipeline.py :: score_transaction()
    ① PII tokenization vault      core/security.py   raw PII never reaches the LLM
    ② deterministic rules         core/rules.py      6 rules → score + hits
@@ -76,6 +78,8 @@ FastAPI api/main.py  POST /api/transactions ────────────
                                                         ▼
                      SQLite (core/db.py) + FAISS index (data/faiss/)
                                                         ▼
+   ⑨ notification            core/notifications.py  toast + centre + real .eml outbox
+                                                        ▼
    ★ LEARNING LOOP: analyst resolves an alert → narrative embedded → added to FAISS →
      the next similar transaction is caught citing the case just resolved.
 ```
@@ -84,7 +88,8 @@ FastAPI api/main.py  POST /api/transactions ────────────
 
 | Decision | Why |
 |---|---|
-| **Streamlit for UI, not Flask/React** | Both organizer guides are Streamlit; chat, dataframes, charts, forms are one-liners. Team has mixed coding experience. |
+| **Flask + hand-written HTML/CSS/JS, not Streamlit** | Streamlit was the right first call — one-liner widgets, mixed-experience team — but it caps how the product can look, and the judging rubric scores UX. `core/` was already UI-agnostic, so the swap cost nothing architecturally and buys a real drill-down interaction Streamlit cannot express. Say it in the pitch: *we replaced the entire presentation layer without touching a rule, an agent, or the pipeline.* |
+| **No chart library, no CDN** | Charts are hand-drawn SVG in `web/static/js/charts.js`. A CDN would put the demo one wifi failure away from an unstyled page, and offline survival is a stated requirement. |
 | **FastAPI kept, but thin (~80 lines)** | It is the live-demo injection mechanism (POST from a phone → dashboard lights up) and it makes the "separated layers" rubric claim true. All logic stays in `core/`. |
 | **Explicit Python orchestration, not LangGraph** | Regulated domain: a traceable, auditable, deterministic control flow beats a framework graph. Also removes an install risk. Say this out loud in the pitch. |
 | **Rules run before the LLM** | ~94% of transactions never hit the LLM. This is the entire cost-effectiveness argument, and it is measured live in the Admin cost meter. |
@@ -100,11 +105,17 @@ Nobody edits another person's files. This is what keeps 5 AI-assisted sessions f
 
 | Owner | Files |
 |---|---|
-| **A** Integrator | `core/contracts.py` `config.py` `db.py` `llm.py` `security.py` `pipeline.py` · `api/main.py` · `app.py` · **only A merges to main** |
+| **A** Integrator | `core/contracts.py` `config.py` `db.py` `llm.py` `security.py` `pipeline.py` `notifications.py` · `api/main.py` · `web/__init__.py` `web/auth.py` · **only A merges to main** |
 | **B** Fraud+RAG | `core/rules.py` `rag.py` `travel.py` `agents/fraud_analyst.py` `evaluation.py` |
-| **C** Customer portal | `ui/customer.py` · `core/agents/router.py` `customer_agent.py` `tools.py` |
-| **D** Admin portal | `ui/admin.py` `demo_control.py` `components.py` |
+| **C** Customer portal | `web/routes/customer.py` `agent.py` `drill.py` · `web/templates/customer/*` · `core/agents/router.py` `customer_agent.py` `tools.py` · `core/insights.py` |
+| **D** Admin portal | `web/routes/admin.py` `demo.py` `notifications.py` · `web/templates/admin/*` |
 | **E** Data/docs/deck | `data/*` `docs/*` · slides · demo script · manual QA |
+
+Shared and owned by whoever touches them last, but tell the others: `web/static/css/glass.css`,
+`web/static/js/*.js`, `web/templates/base.html`, `web/templates/partials/*`. A change to any
+of those four is visible on every page in both portals.
+
+The Streamlit UI (`app.py`, `ui/*`) is retired. Leave it alone; it is the fallback.
 
 **Before asking an AI to write any file, paste `core/contracts.py` into the session as context.**
 That single habit is what makes independently-generated code fit together.
@@ -123,11 +134,14 @@ That single habit is what makes independently-generated code fit together.
 
 Run things with:
 ```bash
-streamlit run app.py                    # the app
-uvicorn api.main:app --port 8000        # the ingestion API
+python run_web.py                       # the app — http://127.0.0.1:5000
+uvicorn api.main:app --port 8000        # the ingestion API (optional; Flask mirrors it)
 python -m core.pipeline --selftest      # end-to-end check
 python -m core.evaluation               # the eval harness
+streamlit run app.py                    # the retired Streamlit UI, kept as a fallback
 ```
+
+Sign in as `customer`, `analyst` or `admin` — password `demo`.
 
 ---
 
@@ -159,9 +173,53 @@ blocked on an API key.** The whole app runs today with `DEMO_MODE=off` (rules on
 - [x] `docs/DEMO_SCRIPT.md`, `docs/ARCHITECTURE.md`
 - [x] Offline fallback verified against a dead endpoint — all 7 beats, citations intact
 - [x] Full UI walkthrough in a browser; three demo-breaking bugs found and fixed
+- [x] **UI migrated from Streamlit to Flask** — `web/`, one process, `python run_web.py`
+- [x] Clickable drill-downs on every figure — `GET /api/drill/<kind>/<key>`, 8 kinds
+- [x] Notifications wired: toast + centre + real `.eml` outbox on every action
+- [x] Agent action set completed — 14 tools incl. statement, travel budget, security review
 - [ ] **← NEXT: slide deck** (docs/ARCHITECTURE.md headings map to slides)
 - [ ] Demo rehearsed 3× under 10:00, screen recording captured
 - [ ] Re-run `python -m core.record_demo` after any prompt/scenario change
+
+---
+
+## The Flask UI (`web/`)
+
+Streamlit is retired but still in the repo (`app.py`, `ui/`) as a fallback. Nothing in
+`core/` changed to make the swap — that is the claim, and it is worth making out loud:
+**the entire presentation layer was replaced without touching a rule, an agent, or the
+pipeline.**
+
+| Path | What it is |
+|---|---|
+| `web/__init__.py` | App factory. Registers 8 blueprints, injects `user`/`sb_health`/`all_customers`, template filters |
+| `web/auth.py` | Session auth + `role_required`. Gates are on the **route**, so a customer gets 403 on `/ops/*`, not a hidden link |
+| `web/routes/drill.py` | **The drill-down API.** `GET /api/drill/<kind>/<key>` — health · security · protection · spend · txn · alert · cost · rule |
+| `web/routes/{customer,admin,demo,agent,notifications,ingest}.py` | One module per surface, all thin |
+| `web/static/css/glass.css` | The whole design system. No framework, no web fonts, no CDN |
+| `web/static/js/charts.js` | 8 hand-drawn SVG chart types. **No CDN on purpose** — the demo has to survive with the wifi off |
+| `web/static/js/app.js` | Toasts, modals, the generic drill renderer, balance masking, notification polling |
+
+**Adding a drill-down takes no front-end work.** Add a handler to `DISPATCH` in
+`routes/drill.py` and put `data-drill="kind:key"` on any element. `wireDrilldowns()` finds
+it and `renderDrill()` draws whatever the endpoint returns.
+
+**Customer-scoped drill kinds read `auth.active_customer_id()` from the session, never the
+key in the URL.** Passing someone else's id returns your own data. `alert` and `cost` are
+staff-only and audit the attempt.
+
+### Every action alerts the customer
+
+`core/notifications.py` was written but wired to nothing. It now fires from three places:
+
+- `tools.execute()` — one central hook, so a tool added later cannot forget. A write tool
+  declares `notify_subject` and the alert follows automatically.
+- `pipeline._persist()` — on `FREEZE_AND_ESCALATE`/`QUARANTINE` (danger) and `CHALLENGE` (warn).
+- The analyst resolving an alert, either way.
+
+Each one raises a toast, a row in the notification centre, and a **real `.eml`** in
+`data/outbox/` that opens in any mail client. Nothing is labelled delivered unless SMTP is
+configured (`SMTP_HOST` etc.) and the send succeeded — the UI says plainly when it is not.
 
 ### Three bugs the browser walkthrough caught that CLI tests could not
 
@@ -169,6 +227,7 @@ blocked on an API key.** The whole app runs today with `DEMO_MODE=off` (rules on
    queue's expander. Streamlit raises `StreamlitAPIException` and silently drops every
    widget after it — the **Confirm fraud / False positive buttons never rendered**, killing
    the human-in-the-loop beat and the learning-loop climax. Fixed with `use_expander=False`.
+   *The Flask queue renders them as plain form buttons; the failure mode cannot recur.*
 
 2. **Cost meter inverted.** On a clean reseed it read *"2 transactions scored, 0% resolved
    without a model"* with a negative saving. Seeding never scored anything, cost came from
@@ -177,13 +236,69 @@ blocked on an API key.** The whole app runs today with `DEMO_MODE=off` (rules on
 3. **`width="stretch"` doesn't exist in Streamlit 1.45.1** (20 call sites). It throws, and
    on a form it means no submit button — login was impossible.
 
-### Stateful demo traps (both are pre-flight checklist items)
+### Three the Flask migration caught
+
+4. **`build_statement()` still unpacked the old tuple shapes.** `HealthComponent` and
+   `SecurityCheck` became dataclasses carrying their own evidence; two loops in
+   `core/insights.py` still did `for label, earned, maximum, detail in ...` and raised
+   `TypeError` on any statement. CLI tests never touched that path.
+
+5. **The agent silently refused to freeze a card.** The model returns
+   `{"action": "freeze_card", "tool": "freeze_card", …}` instead of the literal
+   `{"action": "tool", …}` the prompt asks for. The loop fell through to the prose branch
+   with an empty `say`, so *"freeze my card, it's been stolen"* answered **"Could you
+   rephrase that?"** and did nothing. `customer_agent._normalise()` now repairs the
+   envelope — same reasoning as the JSON repair-retry on the fraud path.
+
+6. **The startup banner crashed on Windows.** A `→` in `run_web.py`'s print killed the
+   launch under cp1252 before Flask ever bound a port — on exactly the kind of console the
+   demo runs from. ASCII only in anything that prints at startup.
+
+7. **The offline chat cache expired at midnight.** `customer_agent` used the default cache
+   key, which hashes the whole prompt — and its system prompt embeds `date.today()`, while
+   its user prompt carries the conversation history. So a cache recorded on Thursday missed
+   on Friday, and the same question keyed differently depending on what preceded it. The
+   recorded chat beats would have failed to replay on the one occasion they exist for.
+   `_chat_cache_key()` now keys on intent + normalised question + loop step, the same
+   scenario-stable approach `fraud_analyst` already used.
+
+8. **The recorder poisoned its own cache.** `record_demo` ran against a hero card left
+   frozen by an earlier fraud injection, so `CARD_ALREADY_FROZEN` (+60) pushed the
+   *legitimate* beats to 100 and they recorded as `FREEZE_AND_ESCALATE`. Verification
+   passed, because it replayed the same wrong answers. Offline, beat 1 would have shown an
+   everyday grocery run being blocked as fraud. `record_demo._preflight()` now resets the
+   card and travel notice itself, and the run warns loudly if any `legit_*` scenario
+   records as blocked. **A tool must guarantee its own preconditions when getting them
+   wrong fails silently.**
+
+9. **"Full reset" was not full.** `db.reset_db()` dropped a hand-written list of nine
+   tables. `notifications` and `spending_alerts` were added later and never appended, so a
+   reset left the notification centre showing every alert from the previous rehearsal, and
+   the `.eml` outbox kept files whose notifications no longer existed. It now enumerates
+   from `sqlite_master`, and `seed.seed(reset=True)` clears the outbox — so the next table
+   someone adds cannot be forgotten.
+
+10. **The security score changed on every restart.** `security_posture()` derived the
+    placeholder password age from the builtin `hash(customer_id)`. Python salts string
+    hashing per process, so three consecutive runs gave 213, 90 and 37 days — moving the
+    security score between 71 and 86 and the health grade between Good and Excellent.
+    Restart the app mid-demo and a judge watches the customer's security grade change by
+    itself. Now `hashlib.sha256`. **Anything presented to a user as a stable fact must
+    never depend on `hash()`.**
+
+### Stateful demo traps (all three are pre-flight checklist items)
+
+The **Run pre-flight check** button on Demo control fixes the first two and reports what it
+changed. Press it between rehearsals.
 
 - Injecting fraud **freezes the hero's card**. `CARD_ALREADY_FROZEN` is +60, so every later
-  transaction scores ~100 and each beat looks like fraud. Click **Unfreeze hero card**
-  between rehearsals.
+  transaction scores ~100 and each beat looks like fraud.
 - A reseed **wipes the travel notice**. Without it the Spain beat isn't testing suppression
-  at all. Click **File travel notice (Spain)** before running the demo.
+  at all.
+- **Re-run `python -m core.record_demo` after touching a prompt, a tool, or a chat quick
+  action.** The chat beats it records must match `chat_widget.html` verbatim — a quick-action
+  button whose prompt was never recorded is dead offline, and it will be the button you
+  press on stage.
 
 ### Two defects the evaluation harness caught (both fixed)
 
@@ -216,6 +331,18 @@ add points.
 | Groundedness | **100%** — no fabricated citations |
 | Hard eval cases that defeat rules alone | **7 of 8**; agent resolves 3 |
 | p95 latency | ~3.4 s model calls · ~9 ms cheap path |
+
+**Re-verified after the Flask migration** (38 cases, live): recall **100%**, legitimate
+customers blocked **0**, groundedness **100%** with 0 fabricated citations across 18 cases
+that cited evidence, avg latency 3,439 ms, p95 7,352 ms, $0.1724 for the run. Legitimate
+customers challenged came in at 7 rather than 9 — the index had gained one analyst-learned
+case by then, which is the loop doing its job.
+
+The harness prints **RESULT: BELOW TARGET** because it counts a *challenge* as a false
+positive against a ≤10% target. Nothing legitimate is ever blocked; the 25% is customers
+asked to confirm. Know that distinction before a judge asks — the honest answer is that
+step-up verification is the correct action on a genuinely ambiguous transaction, and the
+target is stricter than the behaviour deserves.
 
 **Be honest about the A/B in the pitch.** The rules are strong enough that the model adds
 little raw detection accuracy. Its real value is the explanation an analyst needs to act,

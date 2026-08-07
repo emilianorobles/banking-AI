@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import risk_pill, action_pill %}
+
+{% block title %}Alert queue · SentinelBank{% endblock %}
+{% block heading %}Alert queue{% endblock %}
+{% block subheading %}
+  Nothing here is final. A freeze stops the bleeding; you confirm or reverse it — and either
+  way the case is written back into the knowledge store.
+{% endblock %}
+
+{% block content %}
+
+<form method="get" class="row" style="margin-bottom:var(--s-3)">
+  <span class="label">Show</span>
+  <select name="status" onchange="this.form.submit()" style="width:auto">
+    {% for s in ['PENDING', 'APPROVED', 'REJECTED'] %}
+      <option value="{{ s }}" {{ 'selected' if status == s }}>{{ s|title }}</option>
+    {% endfor %}
+  </select>
+  <span class="label">Region</span>
+  <select name="region" onchange="this.form.submit()" style="width:auto">
+    <option value="ALL" {{ 'selected' if region == 'ALL' }}>All regions</option>
+    {% for r in regions %}
+      <option value="{{ r }}" {{ 'selected' if region == r }}>{{ r }}</option>
+    {% endfor %}
+  </select>
+  <span class="dim small">{{ rows|length }} shown</span>
+</form>
+
+<section class="stack">
+  {% for row in rows %}
+    {% set a = row.alert %}{% set t = row.txn %}{% set d = row.decision %}
+    <article class="glass card">
+
+      <div class="between" style="align-items:flex-start;gap:var(--s-3)">
+        <div style="min-width:0">
+          <div class="row">
+            {{ risk_pill(a.risk_score) }}
+            <span class="pill {{ 'pill-critical' if a.priority in ('P1', 'CRITICAL') else 'pill-warn' }}">
+              {{ a.priority }}
+            </span>
+            {{ action_pill(a.action) }}
+            {% if d.llm_used %}
+              <span class="pill pill-violet">AI analyst · {{ '{:.0%}'.format(d.confidence or 0) }} confident</span>
+            {% else %}
+              <span class="pill pill-info">Rules only · no model cost</span>
+            {% endif %}
+            {% if d.injection_detected %}<span class="pill pill-danger">Prompt injection</span>{% endif %}
+            {% if d.suppressed_by_travel %}<span class="pill pill-ok">Travel notice applied</span>{% endif %}
+            {% if not d.groundedness_ok %}<span class="pill pill-danger">Groundedness failed</span>{% endif %}
+          </div>
+
+          <h3 style="margin:.55rem 0 .25rem">{{ a.summary }}</h3>
+          <div class="small muted">
+            {{ t.amount|money2(t.currency) }} at <strong>{{ t.merchant }}</strong>
+            ({{ t.merchant_category }}) — {{ t.city }}, {{ t.country }}
+            · {{ t.channel.replace('_', ' ') }} · {{ t.timestamp|shortdt }}
+          </div>
+          <div class="tiny dim" style="margin-top:.25rem">
+            {{ row.customer.name if row.customer }} · {{ a.customer_id }} ·
+            card ••••{{ t.card_last4 }} ·
+            {{ a.alert_id }} · decided in {{ d.latency_ms }} ms
+          </div>
+        </div>
+
+        <button class="btn btn-sm nowrap" data-drill="alert:{{ a.alert_id }}"
+                data-drill-title="{{ a.alert_id }}">Full detail</button>
+      </div>
+
+      <!-- rules -->
+      <div class="row" style="margin-top:.8rem">
+        {% for h in d.rule_hits %}
+          <button class="pill pill-warn" style="cursor:pointer;border:0;font-family:inherit"
+                  data-drill="rule:{{ h.rule_id }}" data-drill-title="{{ h.rule_id }}">
+            {{ h.rule_id }} +{{ h.weight }}
+          </button>
+        {% endfor %}
+        <span class="pill pill-info">rule score {{ d.rule_score }}</span>
+        <span class="pill {{ 'pill-danger' if d.risk_score >= 70 else 'pill-warn' }}">
+          final {{ d.risk_score }}
+        </span>
+      </div>
+
+      {% if d.reasoning %}
+        <div class="note" style="margin-top:.8rem">
+          <div class="label" style="margin-bottom:.25rem">Analyst reasoning</div>
+          <div class="small">{{ d.reasoning }}</div>
+        </div>
+      {% endif %}
+
+      {% if row.cases %}
+        <div class="label" style="margin-top:.8rem">Precedents it reasoned from</div>
+        <div class="stack" style="margin-top:.35rem">
+          {% for c in row.cases %}
+            <div class="glass-2 card-tight" style="border-radius:var(--r-sm)">
+              <div class="row">
+                <span class="mono tiny">{{ c.case_id }}</span>
+                <span class="pill {{ 'pill-danger' if c.outcome == 'confirmed_fraud' else 'pill-ok' }}">
+                  {{ c.outcome.replace('_', ' ') }}
+                </span>
+                {% if c.source == 'learned' %}
+                  <span class="pill pill-violet">learned from an analyst</span>
+                {% endif %}
+              </div>
+              <div class="small" style="margin-top:.3rem">{{ c.title }}</div>
+              <div class="tiny dim" style="margin-top:.2rem">{{ c.narrative[:220] }}…</div>
+            </div>
+          {% endfor %}
+        </div>
+      {% elif d.llm_used %}
+        <div class="note note-warn small" style="margin-top:.8rem">
+          The model cited no precedent for this one — treat its reasoning with more caution.
+        </div>
+      {% endif %}
+
+      <!-- decision -->
+      {% if a.status == 'PENDING' %}
+        <hr class="divider">
+        <form method="post"
+              action="{{ url_for('admin.resolve', alert_id=a.alert_id, region=region) }}">
+          <label class="field">
+            <span class="label">Case note — becomes part of the retrievable precedent</span>
+            <input type="text" name="note"
+                   placeholder="e.g. Customer confirmed card still in possession; PAN compromised.">
+          </label>
+          <div class="between">
+            <span class="tiny dim">
+              Both outcomes teach the system. A false positive is as valuable a signal as a
+              confirmed fraud.
+            </span>
+            <div class="row">
+              <button class="btn btn-sm btn-danger" name="outcome" value="confirmed_fraud">
+                🔴 Confirm fraud
+              </button>
+              <button class="btn btn-sm btn-ok" name="outcome" value="false_positive">
+                🟢 False positive
+              </button>
+            </div>
+          </div>
+        </form>
+      {% else %}
+        <hr class="divider">
+        <div class="note {{ 'note-danger' if a.outcome == 'confirmed_fraud' else 'note-ok' }}">
+          <strong>{{ a.outcome.replace('_', ' ')|title }}</strong>
+          by {{ a.resolved_by }} at {{ a.resolved_at|shortdt }}
+          {% if a.analyst_note %}<div class="small" style="margin-top:.25rem">“{{ a.analyst_note }}”</div>{% endif %}
+          {% if a.learned_case_id %}
+            <div class="small" style="margin-top:.4rem">
+              📚 Written into the knowledge store as
+              <span class="mono">{{ a.learned_case_id }}</span> — retrievable immediately,
+              so the next similar transaction is judged against this decision.
+            </div>
+          {% endif %}
+        </div>
+      {% endif %}
+    </article>
+  {% else %}
+    <div class="glass card center">
+      <div class="stat-value">✅</div>
+      <h3>No {{ status|lower }} alerts{{ ' in ' ~ region|lower if region != 'ALL' }}</h3>
+      <p class="muted small">
+        Inject a scenario from Demo control to put one in the queue.
+      </p>
+    </div>
+  {% endfor %}
+</section>
+
+{% endblock %}

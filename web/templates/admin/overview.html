@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import stat, risk_pill, action_pill, txn_table, chart_card %}
+
+{% block title %}Fraud operations · SentinelBank{% endblock %}
+{% block heading %}Fraud operations{% endblock %}
+{% block subheading %}Live screening across every region.{% endblock %}
+
+{% block content %}
+
+<form method="get" class="row" style="margin-bottom:var(--s-3)">
+  <span class="label">Region</span>
+  <select name="region" onchange="this.form.submit()" style="width:auto">
+    <option value="ALL" {{ 'selected' if region == 'ALL' }}>All regions</option>
+    {% for r in regions %}
+      <option value="{{ r }}" {{ 'selected' if region == r }}>{{ r }}</option>
+    {% endfor %}
+  </select>
+</form>
+
+{% set totals = namespace(txns=0, frozen=0, challenged=0, suppressed=0, volume=0) %}
+{% for s in stats %}
+  {% set totals.txns = totals.txns + s.transactions %}
+  {% set totals.frozen = totals.frozen + s.frozen %}
+  {% set totals.challenged = totals.challenged + s.challenged %}
+  {% set totals.suppressed = totals.suppressed + s.travel_suppressed %}
+  {% set totals.volume = totals.volume + s.volume %}
+{% endfor %}
+
+<section class="grid g4" style="margin-bottom:var(--s-3)">
+  {{ stat('Transactions scored', '{:,}'.format(totals.txns), 'across ' ~ stats|length ~ ' regions', '', '📊') }}
+  {{ stat('Awaiting review', pending|length, 'human decision required', '', '🚨', 'pending' if pending else '') }}
+  {{ stat('Cards frozen', '{:,}'.format(totals.frozen), 'auto-frozen, pending confirmation', '', '🔒') }}
+  {{ stat('False positives prevented', '{:,}'.format(totals.suppressed),
+          'suppressed by travel notices', '', '✈️') }}
+</section>
+
+<section class="grid g4" style="margin-bottom:var(--s-3)">
+  {{ stat('Decided without a model', '{:,}'.format(cost.avoided),
+          '{:.1f}% of all volume'.format(cost.avoided_pct), 'cost:avoided', '⚡') }}
+  {{ stat('Spend to date', '${:,.4f}'.format(cost.spent_so_far_usd),
+          'vs ${:,.2f} all-model'.format(cost.naive_cost_usd), 'cost:saving', '💰') }}
+  {{ stat('Model latency', '{:,.0f} ms'.format(cost.avg_latency_ms),
+          '~9 ms on the rules-only path', 'cost:latency', '⏱️') }}
+  {{ stat('Knowledge store', index_size, learned ~ ' learned from analysts', '', '📚') }}
+</section>
+
+<section class="split" style="margin-bottom:var(--s-3)">
+  {{ chart_card('Volume and interventions by region', 'region-chart',
+                'blue is clean volume, amber challenged, red frozen') }}
+
+  <div class="glass card">
+    <div class="label">Per region</div>
+    <div class="tbl-wrap" style="margin-top:.6rem">
+      <table class="tbl">
+        <thead>
+          <tr><th>Region</th><th class="num">Txns</th><th class="num">Frozen</th>
+              <th class="num">Challenged</th><th class="num">Avg risk</th></tr>
+        </thead>
+        <tbody>
+          {% for s in stats %}
+            <tr>
+              <td>{{ s.region }}</td>
+              <td class="num">{{ '{:,}'.format(s.transactions) }}</td>
+              <td class="num" style="color:var(--danger)">{{ s.frozen }}</td>
+              <td class="num" style="color:var(--warn)">{{ s.challenged }}</td>
+              <td class="num">{{ '{:.1f}'.format(s.avg_risk) }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="dim center">Nothing scored yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="split">
+  <div class="glass card">
+    <div class="between" style="margin-bottom:.6rem">
+      <div>
+        <div class="label">Queue — highest risk first</div>
+        <div class="tiny dim">Click any alert for the rules and precedents behind it.</div>
+      </div>
+      <a class="btn btn-sm btn-primary" href="{{ url_for('admin.alert_queue', region=region) }}">
+        Work the queue
+      </a>
+    </div>
+
+    <div class="stack">
+      {% for a in pending[:8] %}
+        {% set t = txns.get(a.txn_id) %}
+        <div class="between glass-2 card-tight card-click" style="border-radius:var(--r-sm)"
+             data-drill="alert:{{ a.alert_id }}" data-drill-title="{{ a.alert_id }}">
+          <div style="min-width:0">
+            <div class="row">
+              {{ risk_pill(a.risk_score) }}
+              <span class="pill pill-warn">{{ a.priority }}</span>
+              <span class="tiny dim mono">{{ a.customer_id }}</span>
+            </div>
+            <div class="small" style="margin-top:.3rem">{{ a.summary }}</div>
+          </div>
+          <span class="tiny dim nowrap">{{ a.created_at|shortdt }}</span>
+        </div>
+      {% else %}
+        <div class="note note-ok">Nothing pending in {{ region|lower }}.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="glass card">
+    <div class="label">Latest screened</div>
+    <div class="tiny dim">Live feed across all customers.</div>
+    <div style="margin-top:.6rem">{{ txn_table(recent, decisions, limit=10) }}</div>
+  </div>
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const STATS = {{ stats|tojson }};
+  SBCharts.stackedBars(
+    document.getElementById("region-chart"),
+    STATS.map(s => ({
+      label: s.region,
+      total: s.transactions,
+      parts: [
+        { label: "clean", value: s.transactions - s.frozen - s.challenged,
+          colour: "var(--info)", dim: true },
+        { label: "challenged", value: s.challenged, colour: "var(--warn)" },
+        { label: "frozen", value: s.frozen, colour: "var(--danger)" },
+      ],
+    })),
+    { height: 260 }
+  );
+</script>
+{% endblock %}

@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import check_card, stat, chart_card %}
+
+{% block title %}Security · SentinelBank{% endblock %}
+{% block heading %}Security{% endblock %}
+{% block subheading %}
+  Every check below runs against your real account state. Click one to see exactly what it looked at.
+{% endblock %}
+
+{% block content %}
+
+<section class="split" style="margin-bottom:var(--s-3)">
+  <div class="glass card">
+    <div class="between">
+      <div>
+        <div class="label">Security score</div>
+        <div class="stat-value">{{ posture.score }}<span class="dim" style="font-size:1rem">/100</span></div>
+        <div class="small muted">Grade {{ posture.grade }} —
+          {{ posture.checks|selectattr('passed')|list|length }} of {{ posture.checks|length }}
+          checks passing</div>
+      </div>
+      <div style="width:210px" id="sec-gauge"></div>
+    </div>
+
+    <button class="btn btn-sm" style="margin-top:.6rem" data-drill="security:_total"
+            data-drill-title="Security score">See how this is calculated</button>
+
+    {% if posture.recommendations %}
+      <div class="stack" style="margin-top:.8rem">
+        {% for r in posture.recommendations %}
+          <div class="note note-warn small">{{ r }}</div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="note note-ok small" style="margin-top:.8rem">
+        Nothing outstanding — every check is passing.
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="glass card">
+    <div class="label">Protection activity</div>
+    <div class="tiny dim">Counted from stored decisions, not estimated.</div>
+    <div class="stack" style="margin-top:.6rem;gap:.1rem">
+      {% set rows = [
+        ('screened',   'Transactions screened',  prot.transactions_screened, ''),
+        ('blocked',    'Fraud stopped',          prot.fraud_blocked, 'color:var(--danger)'),
+        ('challenged', 'Verification requested', prot.challenges_issued, 'color:var(--warn)'),
+        ('suppressed', 'False alarms avoided',   prot.false_positives_prevented, 'color:var(--ok)'),
+        ('tokenized',  'PII fields tokenised',   prot.pii_fields_tokenized, 'color:var(--violet)'),
+        ('injection',  'Prompt injections blocked', prot.injection_blocked, 'color:var(--critical)')
+      ] %}
+      {% for key, label, value, style in rows %}
+        <div class="between card-click" data-drill="protection:{{ key }}"
+             data-drill-title="{{ label }}" style="padding:.35rem 0">
+          <span class="small muted">{{ label }}</span>
+          <span class="num" style="font-weight:800;{{ style }}">{{ value }}</span>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<div class="label" style="margin-bottom:.5rem">Security checks</div>
+<section class="grid g3" style="margin-bottom:var(--s-3)">
+  {% for c in posture.checks %}{{ check_card(c) }}{% endfor %}
+</section>
+
+<section class="split" style="margin-bottom:var(--s-3)">
+  {{ chart_card('Screening activity', 'heat',
+                'every square is a day; darker means more transactions screened') }}
+
+  <div class="glass card">
+    <div class="label">Password strength</div>
+    <div class="tiny dim">
+      Checked in your browser. Nothing you type here is sent anywhere or stored.
+    </div>
+
+    <label class="field" style="margin-top:.7rem">
+      <span class="label">Try a password</span>
+      <input type="password" id="pw" autocomplete="new-password" placeholder="Type to test…">
+    </label>
+
+    <div class="bar"><i id="pw-bar" style="width:0%"></i></div>
+    <div class="between" style="margin-top:.4rem">
+      <span class="small" id="pw-verdict">—</span>
+      <span class="tiny dim" id="pw-score"></span>
+    </div>
+    <ul class="small muted" id="pw-tips" style="margin:.6rem 0 0;padding-left:1.1rem"></ul>
+
+    <hr class="divider">
+    <div class="label">Suggested passphrase</div>
+    <div class="row" style="margin-top:.35rem">
+      <code class="mono" id="suggested"
+            style="font-size:.95rem;padding:.4rem .6rem;background:var(--glass-2);border-radius:var(--r-sm)">{{ suggested }}</code>
+      <button class="btn btn-sm btn-ghost" id="copy-pass" type="button">Copy</button>
+    </div>
+    <div class="tiny dim" style="margin-top:.4rem">
+      Four unrelated words beat a short string of symbols — longer, and far easier to remember.
+    </div>
+  </div>
+</section>
+
+{% if notices %}
+  <section class="glass card">
+    <div class="label">Active travel notices</div>
+    <div class="stack" style="margin-top:.6rem">
+      {% for n in notices %}
+        <div class="between glass-2 card-tight" style="border-radius:var(--r-sm)">
+          <span class="small">✈️ {{ n.countries|join(', ') }} — {{ n.start_date }} to {{ n.end_date }}</span>
+          <span class="pill pill-info">Geography rules suppressed</span>
+        </div>
+      {% endfor %}
+    </div>
+  </section>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  SBCharts.gauge(document.getElementById("sec-gauge"), {{ posture.score }},
+                 { sub: "grade {{ posture.grade }}" });
+
+  /* 12 weeks of screening. Rows are weeks, columns weekdays — the shape everyone already
+     reads from contribution graphs. */
+  const HEAT = {{ heat|tojson }};
+  const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const cells = HEAT.map((d, i) => {
+    const date = new Date(d.day + "T00:00:00");
+    const weekday = (date.getDay() + 6) % 7;             // Monday-first
+    return { col: weekday, row: Math.floor(i / 7), value: d.value,
+             colLabel: DAYS[weekday], rowLabel: d.day };
+  });
+  SBCharts.heatGrid(document.getElementById("heat"), cells, {
+    cols: 7, rows: 12, colLabels: DAYS,
+    rowLabels: Array.from({ length: 12 }, (_, i) => i === 11 ? "now" : `-${11 - i}w`),
+  });
+
+  /* Strength scoring mirrors core/insights.password_strength so the browser and the
+     server agree. Kept client-side deliberately: a password field that posts to the
+     server to be "checked" is a bad habit to demonstrate in a banking app. */
+  const pw = document.getElementById("pw");
+  const bar = document.getElementById("pw-bar");
+  const verdict = document.getElementById("pw-verdict");
+  const scoreEl = document.getElementById("pw-score");
+  const tips = document.getElementById("pw-tips");
+
+  function strength(p) {
+    let score = 0; const issues = [];
+    if (p.length >= 16) score += 40; else if (p.length >= 12) score += 30;
+    else if (p.length >= 8) score += 15; else issues.push("Use at least 12 characters — length beats complexity.");
+    if (/[a-z]/.test(p) && /[A-Z]/.test(p)) score += 15; else issues.push("Mix upper and lower case.");
+    if (/\d/.test(p)) score += 15; else issues.push("Add a digit.");
+    if (/[^A-Za-z0-9]/.test(p)) score += 15; else issues.push("Add a symbol.");
+    if (new Set(p).size > p.length * 0.6) score += 15; else if (p) issues.push("Too many repeated characters.");
+    if (/^(password|123456|qwerty|letmein|admin)/i.test(p)) { score = Math.min(score, 10); issues.push("That's on every breached-password list there is."); }
+    score = Math.max(0, Math.min(100, score));
+    const label = score >= 80 ? "Strong" : score >= 55 ? "Reasonable" : score >= 30 ? "Weak" : "Very weak";
+    return { score, label, issues };
+  }
+
+  pw.addEventListener("input", () => {
+    const p = pw.value;
+    if (!p) { bar.style.width = "0%"; verdict.textContent = "—"; scoreEl.textContent = ""; tips.innerHTML = ""; return; }
+    const r = strength(p);
+    bar.style.width = r.score + "%";
+    bar.style.background = r.score >= 80 ? "var(--grad-b)"
+                        : r.score >= 55 ? "var(--warn)" : "var(--danger)";
+    verdict.textContent = r.label;
+    scoreEl.textContent = r.score + "/100";
+    tips.innerHTML = r.issues.map(i => `<li>${SB.escapeHtml(i)}</li>`).join("");
+  });
+
+  document.getElementById("copy-pass").addEventListener("click", () => {
+    navigator.clipboard.writeText(document.getElementById("suggested").textContent.trim())
+      .then(() => SB.toast("Copied", "Passphrase copied to your clipboard.", "ok"))
+      .catch(() => SB.toast("Couldn't copy", "Select it and copy manually.", "warn"));
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import stat, money_stat, health_card, txn_table, chart_card %}
+
+{% block title %}Dashboard · SentinelBank{% endblock %}
+{% block heading %}Good day, {{ customer.name.split(' ')[0] if customer else 'there' }}{% endblock %}
+{% block subheading %}
+  Every number on this page can explain itself — click any card to see what produced it.
+{% endblock %}
+
+{% block content %}
+
+<section class="hero">
+  <div class="between" style="align-items:flex-start;position:relative;z-index:1">
+    <div class="maskable">
+      <div class="label">Available balance</div>
+      <div class="stat-value mask-target" style="font-size:clamp(1.9rem,4vw,2.9rem)">
+        {{ customer.balance|money2(spend.currency) if customer else '—' }}
+      </div>
+      <div class="row" style="margin-top:.35rem">
+        <span class="small dim mask-target">
+          •••• {{ customer.card_number[-4:] if customer else '____' }}
+        </span>
+        {% if customer and customer.card_frozen %}
+          <span class="pill pill-danger">Card frozen</span>
+        {% else %}
+          <span class="pill pill-ok">Card active</span>
+        {% endif %}
+        {% if notices %}
+          <span class="pill pill-info">✈️ Travelling — {{ notices[0].countries|join(', ') }}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="stack" style="min-width:190px">
+      {% if customer and customer.card_frozen %}
+        <form method="post" action="{{ url_for('customer.card_control', action='unfreeze') }}">
+          <button class="btn btn-ok btn-block">🔓 Unfreeze my card</button>
+        </form>
+      {% else %}
+        <form method="post" action="{{ url_for('customer.card_control', action='freeze') }}"
+              onsubmit="return confirm('Freeze your card? Nothing further will authorise on it.')">
+          <button class="btn btn-danger btn-block">🔒 Freeze my card</button>
+        </form>
+      {% endif %}
+      <button class="btn btn-block" data-ask="Run a security review on my account">
+        🛡️ Ask for a security review
+      </button>
+      <a class="btn btn-ghost btn-block" href="{{ url_for('customer.statements') }}">📄 Statement</a>
+    </div>
+  </div>
+</section>
+
+{% if actions %}
+  <section class="stack" style="margin-bottom:var(--s-3)">
+    {% for a in actions %}
+      <div class="note note-{{ 'danger' if a.priority == 'urgent' else 'warn' if a.priority == 'soon' else '' }}">
+        <div class="between">
+          <div>
+            <strong>{{ a.title }}</strong>
+            <div class="small muted" style="margin-top:.15rem">{{ a.detail }}</div>
+          </div>
+          {% if a.cta %}
+            <a class="btn btn-sm nowrap"
+               href="{{ url_for('customer.alerts') if 'Alert' in a.cta else url_for('customer.travel_page') if 'Travel' in a.cta else url_for('customer.security') }}">
+              {{ a.cta }}
+            </a>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </section>
+{% endif %}
+
+<!-- ---------------------------------------------------------------- scores -->
+<section class="grid g3" style="margin-bottom:var(--s-3)">
+
+  <div class="glass card card-click center" data-drill="health:_total"
+       data-drill-title="Account health score">
+    <div class="label">Account health</div>
+    <div class="ring-wrap" style="margin-top:.5rem">
+      <div id="health-ring"></div>
+      <div class="ring-center">
+        <div>
+          <div class="ring-score">{{ health.score }}</div>
+          <div class="ring-max">GRADE {{ health.grade }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="small muted" style="margin-top:.6rem">{{ health.summary }}</div>
+  </div>
+
+  <div class="glass card card-click center" data-drill="security:_total"
+       data-drill-title="Security score">
+    <div class="label">Security posture</div>
+    <div id="security-gauge" style="margin-top:.4rem"></div>
+    <div class="small muted">
+      {{ posture.checks|selectattr('passed')|list|length }} of {{ posture.checks|length }}
+      checks passing
+    </div>
+  </div>
+
+  <div class="glass card">
+    <div class="label">What we did for you</div>
+    <div class="stack" style="margin-top:.5rem;gap:.15rem">
+      <div class="between card-click" data-drill="protection:screened"
+           data-drill-title="Transactions screened" style="padding:.3rem 0">
+        <span class="small muted">Transactions screened</span>
+        <span class="num" style="font-weight:800">{{ prot.transactions_screened }}</span>
+      </div>
+      <div class="between card-click" data-drill="protection:blocked"
+           data-drill-title="Fraud stopped" style="padding:.3rem 0">
+        <span class="small muted">Fraud stopped</span>
+        <span class="num" style="font-weight:800;color:var(--danger)">{{ prot.fraud_blocked }}</span>
+      </div>
+      <div class="between card-click" data-drill="protection:suppressed"
+           data-drill-title="False alarms avoided" style="padding:.3rem 0">
+        <span class="small muted">False alarms avoided</span>
+        <span class="num" style="font-weight:800;color:var(--ok)">{{ prot.false_positives_prevented }}</span>
+      </div>
+      <div class="between card-click" data-drill="protection:tokenized"
+           data-drill-title="PII fields tokenised" style="padding:.3rem 0">
+        <span class="small muted">PII kept from the AI</span>
+        <span class="num" style="font-weight:800;color:var(--violet)">{{ prot.pii_fields_tokenized }}</span>
+      </div>
+    </div>
+    <div class="tiny dim" style="margin-top:.5rem">Every row is a click away from its evidence.</div>
+  </div>
+</section>
+
+<!-- --------------------------------------------------------- health slices -->
+<div class="label" style="margin-bottom:.5rem">What makes up your health score</div>
+<section class="grid g4" style="margin-bottom:var(--s-3)">
+  {% for c in health.components %}{{ health_card(c) }}{% endfor %}
+</section>
+
+<!-- ------------------------------------------------------------- money row -->
+<section class="grid g4" style="margin-bottom:var(--s-3)">
+  {{ money_stat('Spent this month', proj.spent_so_far|money(proj.currency),
+                'over ' ~ proj.days_elapsed ~ ' days', 'spend:_total', '📅') }}
+  {{ money_stat('Projected month end', proj.projected_total|money(proj.currency),
+                (proj.vs_previous_pct|pct(1)) ~ ' vs last month', 'spend:_total', '📈') }}
+  {{ money_stat('Value protected', prot.amount_protected|money(prot.currency),
+                'stopped before it left your account', 'protection:amount', '🛡️') }}
+  {{ stat('Verification requests', prot.challenges_issued,
+          'times we asked rather than guessed', 'protection:challenged', '❓') }}
+</section>
+
+<!-- ---------------------------------------------------------------- charts -->
+<section class="split" style="margin-bottom:var(--s-3)">
+  {{ chart_card('Spending this month', 'spend-trend',
+                'daily total, with last month’s pace for comparison', 'spend:_total') }}
+  {{ chart_card('Where your money goes', 'cat-donut', 'last 90 days') }}
+</section>
+
+<!-- ------------------------------------------------------------- activity -->
+<section class="glass card">
+  <div class="between" style="margin-bottom:.6rem">
+    <div>
+      <div class="label">Recent activity</div>
+      <div class="tiny dim">Click any transaction to see the rules that ran on it.</div>
+    </div>
+    <a class="btn btn-sm" href="{{ url_for('customer.spending') }}">See all</a>
+  </div>
+  {{ txn_table(recent, decisions, limit=8) }}
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const SPEND_DAILY = {{ spend.daily_current_month|tojson }};
+  const CATEGORIES  = {{ spend.by_category[:7]|tojson }};
+  const PROJ = {{ {'daily_rate': proj.daily_rate, 'previous_month': proj.previous_month,
+                   'days_in_month': proj.days_in_month}|tojson }};
+
+  SBCharts.ring(document.getElementById("health-ring"), {{ health.score }});
+  SBCharts.gauge(document.getElementById("security-gauge"), {{ posture.score }},
+                 { sub: "grade {{ posture.grade }}" });
+
+  /* Running total across the month, against the pace that would land on last month's
+     total. A daily bar chart answers "did I spend today"; this answers "am I on track",
+     which is the question people actually have. */
+  let running = 0;
+  const points = SPEND_DAILY.map(([day, amount]) => {
+    running += amount;
+    return { label: day.slice(8), value: running, barValue: amount };
+  });
+  SBCharts.areaLine(document.getElementById("spend-trend"), { points: points }, {
+    barsToo: true, height: 250,
+    refs: PROJ.previous_month > 0
+      ? [{ label: "last month", value: PROJ.previous_month }]
+      : [],
+  });
+
+  SBCharts.donut(
+    document.getElementById("cat-donut"),
+    CATEGORIES.map(([label, value]) => ({ label: label, value: value })),
+    { centreLabel: SBCharts.fmt(CATEGORIES.reduce((a, c) => a + c[1], 0)), centreSub: "90 days" }
+  );
+
+  /* Each donut slice drills into its category. Wiring it after render keeps the chart
+     library generic -- it draws, it does not know about our endpoints. */
+  document.querySelectorAll("#cat-donut .legend span").forEach((node, i) => {
+    if (!CATEGORIES[i]) return;
+    node.style.cursor = "pointer";
+    node.title = "See the transactions behind this";
+    node.addEventListener("click", () => SB.drill("spend", CATEGORIES[i][0], CATEGORIES[i][0]));
+  });
+</script>
+{% endblock %}

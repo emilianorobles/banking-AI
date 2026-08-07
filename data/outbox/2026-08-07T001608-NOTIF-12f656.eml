@@ -1,0 +1,159 @@
+Subject: [SentinelBank] Your account statement is ready
+From: alerts@sentinelbank.example
+To: emma.garcia0@example.com
+Date:
+X-SentinelBank-Kind: statement
+X-SentinelBank-Severity: ok
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============0440502328255893581=="
+
+--===============0440502328255893581==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: base64
+
+U2VudGluZWxCYW5rIOKAlCBDb25maXJtYXRpb24KPT09PT09PT09PT09PT09PT09PT09PT09PT09
+PT09PT09PT09PT09PT09PT09PT09PT09PQoKWW91ciBhY2NvdW50IHN0YXRlbWVudCBpcyByZWFk
+eQoKWW91IGFza2VkIHRoZSBhc3Npc3RhbnQgZm9yIGEgc3RhdGVtZW50IGFuZCBpdCBoYXMgYmVl
+biBnZW5lcmF0ZWQuIElmIHRoaXMgd2Fzbid0IHlvdSwgZnJlZXplIHlvdXIgY2FyZCBzdHJhaWdo
+dCBhd2F5LgoKPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09
+PT09PT09PT09PT09PT09PQogIFNFTlRJTkVMQkFOSyDigJQgQUNDT1VOVCBTVEFURU1FTlQKICBF
+bW1hIEdhcmNpYSAgIMK3ICAgQ2FyZCBlbmRpbmcgMjUyMwogIEdlbmVyYXRlZCAwNyBBdWd1c3Qg
+MjAyNiwgMDA6MTYgVVRDCj09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09
+PT09PT09PT09PT09PT09PT09PT09PT0KCkFDQ09VTlQgSEVBTFRICiAgT3ZlcmFsbCBzY29yZSAg
+ICAgICAgICA5MC8xMDAgIChFeGNlbGxlbnQpCiAgWW91ciBhY2NvdW50IGlzIGluIGdyZWF0IHNo
+YXBlLiBObyBhY3Rpb24gbmVlZGVkLgoKICBUcmFuc2FjdGlvbiBoZWFsdGggICAgICAzNC8zNSAg
+IDk3JSBvZiB5b3VyIHRyYW5zYWN0aW9ucyB3ZW50IHRocm91Z2ggd2l0aCBubyBmcmljdGlvbgog
+IFNlY3VyaXR5IHBvc3R1cmUgICAgICAgIDI2LzMwICAgNiBvZiA3IGNoZWNrcyBwYXNzaW5nCiAg
+U3BlbmRpbmcgc3RhYmlsaXR5ICAgICAgMTUvMjAgICBQcm9qZWN0ZWQgLTI0JSB2cyBsYXN0IG1v
+bnRoCiAgQ2FyZCBzdGFuZGluZyAgICAgICAgICAgMTUvMTUgICBBY3RpdmUgYW5kIGluIGdvb2Qg
+c3RhbmRpbmcKClNQRU5ESU5HCiAgTGFzdCAzMCBkYXlzICAgICAgICAgICAyLDY4Mi40MCBJTlIg
+ICAoLTIyLjIlIHZzIHByZXZpb3VzIDMwKQogIFRyYW5zYWN0aW9ucyAgICAgICAgICAgMjMKICBB
+dmVyYWdlIHRyYW5zYWN0aW9uICAgIDExNi42MyBJTlIKICBMYXJnZXN0ICAgICAgICAgICAgICAg
+IDM3NC40MSBJTlIKCiAgVG9wIGNhdGVnb3JpZXMgKDkwIGRheXMpOgogICAgZ3JvY2VyaWVzICAg
+ICAgICAgICAgICAgICAgMSw4MjYuNDAgSU5SCiAgICBlbGVjdHJvbmljcyAgICAgICAgICAgICAg
+ICAxLDc5My4xOCBJTlIKICAgIHV0aWxpdGllcyAgICAgICAgICAgICAgICAgIDEsNTMyLjI5IElO
+UgogICAgZnVlbCAgICAgICAgICAgICAgICAgICAgICAgMSwyMzMuOTQgSU5SCiAgICByZXN0YXVy
+YW50cyAgICAgICAgICAgICAgICAgIDg1NS4wMSBJTlIKICAgIGFwcGFyZWwgICAgICAgICAgICAg
+ICAgICAgICAgODA1Ljc2IElOUgoKTU9OVEgtRU5EIFBST0pFQ1RJT04KICBTcGVudCBzbyBmYXIg
+ICAgICAgICAgIDU0Mi41MyBJTlIgICAoZGF5IDcgb2YgMzEpCiAgUHJvamVjdGVkIHRvdGFsICAg
+ICAgICAyLDQwMi42MyBJTlIKICBQcmV2aW91cyBtb250aCAgICAgICAgIDMsMTU2LjMxIElOUgog
+IENoYW5nZSAgICAgICAgICAgICAgICAgLTIzLjklCgpQUk9URUNUSU9OCiAgVHJhbnNhY3Rpb25z
+IHNjcmVlbmVkICAxMjUKICBGcmF1ZCBhdHRlbXB0cyBibG9ja2VkIDAKICBBdHRhY2tzIGJsb2Nr
+ZWQgICAgICAgIDAKICBGYWxzZSBkZWNsaW5lcyBhdm9pZGVkIDAKICBQZXJzb25hbCBkYXRhIGZp
+ZWxkcyB0b2tlbml6ZWQgYmVmb3JlIEFJIHByb2Nlc3Npbmc6IDkKClNFQ1VSSVRZIENIRUNLUwog
+IFt4XSBDYXJkIGFjdGl2ZSBhbmQgbW9uaXRvcmVkCgpBY2NvdW50IGhvbGRlcjogRW1tYSBHYXJj
+aWEKQ2FyZCBlbmRpbmc6IDI1MjMKVGltZTogMjAyNi0wOC0wNyAwMDoxNjowOCBVVEMKUmVmZXJl
+bmNlOiBOT1RJRi0xMmY2NTYKCldlIHdpbGwgbmV2ZXIgYXNrIGZvciB5b3VyIFBJTiwgcGFzc3dv
+cmQgb3IgZnVsbCBjYXJkIG51bWJlciBieSBlbWFpbC4K
+
+--===============0440502328255893581==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+<!doctype html>
+<html><body style=3D"margin:0;padding:0;background:#eef2f9;
+ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-se=
+rif">
+ <table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=3D=
+"0"
+        style=3D"background:#eef2f9;padding:28px 12px">
+  <tr><td align=3D"center">
+   <table role=3D"presentation" width=3D"600" cellpadding=3D"0" cellspacing=
+=3D"0"
+          style=3D"max-width:600px;background:#fff;border-radius:14px;overflo=
+w:hidden;
+                 box-shadow:0 2px 14px rgba(15,23,42,.09)">
+    <tr><td style=3D"background:linear-gradient(135deg,#6366f1,#8b5cf6 45%,#0=
+6b6d4);
+                   padding:22px 26px;color:#fff">
+      <div style=3D"font-size:17px;font-weight:800;letter-spacing:-.2px">Sent=
+inelBank</div>
+      <div style=3D"font-size:12px;opacity:.85;margin-top:2px">Confirmation</=
+div>
+    </td></tr>
+    <tr><td style=3D"padding:26px">
+      <div style=3D"display:inline-block;padding:3px 10px;border-radius:999px;
+                  background:#16a34a1a;color:#16a34a;font-size:11px;font-weig=
+ht:800;
+                  letter-spacing:.4px;text-transform:uppercase">statement</di=
+v>
+      <h1 style=3D"margin:14px 0 8px;font-size:19px;color:#0f172a;
+                 letter-spacing:-.3px">Your account statement is ready</h1>
+      <p style=3D"margin:0;font-size:14px;line-height:1.6;color:#475569">You =
+asked the assistant for a statement and it has been generated. If this wasn&#=
+x27;t you, freeze your card straight away.</p>
+      <div style=3D"margin:18px 0;padding:14px 16px;background:#f6f8fc;border=
+-left:3px solid #16a34a;border-radius:0 8px 8px 0;font-size:13px;color:#33415=
+5;white-space:pre-wrap">=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=
+=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=
+=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D
+  SENTINELBANK =E2=80=94 ACCOUNT STATEMENT
+  Emma Garcia   =C2=B7   Card ending 2523
+  Generated 07 August 2026, 00:16 UTC
+=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=
+=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=
+=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D=3D
+
+ACCOUNT HEALTH
+  Overall score          90/100  (Excellent)
+  Your account is in great shape. No action needed.
+
+  Transaction health      34/35   97% of your transactions went through with =
+no friction
+  Security posture        26/30   6 of 7 checks passing
+  Spending stability      15/20   Projected -24% vs last month
+  Card standing           15/15   Active and in good standing
+
+SPENDING
+  Last 30 days           2,682.40 INR   (-22.2% vs previous 30)
+  Transactions           23
+  Average transaction    116.63 INR
+  Largest                374.41 INR
+
+  Top categories (90 days):
+    groceries                  1,826.40 INR
+    electronics                1,793.18 INR
+    utilities                  1,532.29 INR
+    fuel                       1,233.94 INR
+    restaurants                  855.01 INR
+    apparel                      805.76 INR
+
+MONTH-END PROJECTION
+  Spent so far           542.53 INR   (day 7 of 31)
+  Projected total        2,402.63 INR
+  Previous month         3,156.31 INR
+  Change                 -23.9%
+
+PROTECTION
+  Transactions screened  125
+  Fraud attempts blocked 0
+  Attacks blocked        0
+  False declines avoided 0
+  Personal data fields tokenized before AI processing: 9
+
+SECURITY CHECKS
+  [x] Card active and monitored</div>
+      <p style=3D"margin:22px 0 0;font-size:13px;color:#64748b">
+        Account holder: <strong style=3D"color:#0f172a">Emma Garcia</strong><=
+br>
+        Card ending: <strong style=3D"color:#0f172a">2523</strong><br>
+        Time: 2026-08-07 00:16:08 UTC
+      </p>
+    </td></tr>
+    <tr><td style=3D"padding:16px 26px;background:#f8fafc;border-top:1px soli=
+d #e2e8f0;
+                   font-size:11px;color:#94a3b8;line-height:1.6">
+      If you didn't expect this, open the SentinelBank app and review your al=
+erts.
+      We will never ask for your PIN, password or full card number by email.<=
+br>
+      Reference: NOTIF-12f656
+    </td></tr>
+   </table>
+  </td></tr>
+ </table>
+</body></html>
+
+--===============0440502328255893581==--

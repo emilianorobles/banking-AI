@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import stat, chart_card %}
+
+{% block title %}Cost &amp; performance · SentinelBank{% endblock %}
+{% block heading %}Cost &amp; performance{% endblock %}
+{% block subheading %}Why this is deployable at bank scale — measured, not asserted.{% endblock %}
+
+{% block content %}
+
+<section class="hero" style="padding:var(--s-4) var(--s-5)">
+  <div class="between" style="position:relative;z-index:1;align-items:center">
+    <div style="max-width:640px">
+      <h2 style="margin-bottom:.4rem">
+        {{ '{:.1f}'.format(cost.avoided_pct) }}% of transactions never touch a model.
+      </h2>
+      <p class="muted small" style="margin:0">
+        Deterministic rules score first. A clearly-low or clearly-high rule score is already
+        a decision, so inference is spent only where it changes an outcome. That is the
+        entire cost argument, and every figure on this page comes from recorded token counts
+        rather than a price list.
+      </p>
+    </div>
+    <div style="width:220px" id="avoided-gauge"></div>
+  </div>
+</section>
+
+<section class="grid g4" style="margin-bottom:var(--s-3)">
+  {{ stat('Transactions scored', '{:,}'.format(cost.total_transactions), '', '', '📊') }}
+  {{ stat('Decided by rules alone', '{:,}'.format(cost.avoided),
+          '{:.1f}% of volume'.format(cost.avoided_pct), 'cost:avoided', '⚡') }}
+  {{ stat('Needed a model', '{:,}'.format(cost.llm_transactions),
+          '{:,} model calls'.format(cost.llm_calls), 'cost:avoided', '🤖') }}
+  {{ stat('Cost per model-scored txn', '${:.5f}'.format(cost.cost_per_llm_txn_usd),
+          'measured tokens at gpt-4.1 rates', 'cost:saving', '🧮') }}
+</section>
+
+<section class="split" style="margin-bottom:var(--s-3)">
+  <div class="glass card">
+    <div class="label">What this volume cost</div>
+    <div class="grid g2" style="margin-top:.7rem">
+      <div>
+        <div class="stat-sub">Rules-first (what we actually ran)</div>
+        <div class="stat-value" style="color:var(--ok)">${{ '{:,.2f}'.format(cost.actual_cost_usd) }}</div>
+      </div>
+      <div>
+        <div class="stat-sub">Everything through the model</div>
+        <div class="stat-value" style="color:var(--danger)">${{ '{:,.2f}'.format(cost.naive_cost_usd) }}</div>
+      </div>
+    </div>
+
+    <div id="cost-bars" style="margin-top:.8rem"></div>
+
+    <div class="note note-ok" style="margin-top:.8rem">
+      <strong>${{ '{:,.2f}'.format(cost.saved_usd) }} saved</strong> on this volume alone.
+      Actual spend to date is <span class="mono">${{ '{:,.4f}'.format(cost.spent_so_far_usd) }}</span>.
+      <button class="btn btn-sm btn-ghost" style="margin-top:.4rem"
+              data-drill="cost:saving" data-drill-title="Cost saving">See the arithmetic</button>
+    </div>
+  </div>
+
+  <div class="glass card">
+    <div class="label">Token usage</div>
+    <dl class="kv" style="margin-top:.7rem">
+      <dt>Model calls</dt><dd>{{ '{:,}'.format(cost.llm_calls) }}</dd>
+      <dt>Prompt tokens</dt><dd>{{ '{:,}'.format(cost.prompt_tokens) }}</dd>
+      <dt>Completion tokens</dt><dd>{{ '{:,}'.format(cost.completion_tokens) }}</dd>
+      <dt>Average latency</dt><dd>{{ '{:,.0f}'.format(cost.avg_latency_ms) }} ms</dd>
+      <dt>Model</dt><dd class="mono tiny">{{ model }}</dd>
+      <dt>Mode</dt><dd><span class="pill pill-violet">{{ mode }}</span></dd>
+    </dl>
+
+    <hr class="divider">
+
+    <div class="label">The two paths</div>
+    <div class="stack" style="margin-top:.5rem">
+      <div class="between">
+        <span class="small">Rules only</span>
+        <span class="row">
+          <span class="pill pill-ok">~9 ms</span>
+          <span class="pill pill-ok">$0.00</span>
+        </span>
+      </div>
+      <div class="between">
+        <span class="small">Rules + AI analyst + retrieval</span>
+        <span class="row">
+          <span class="pill pill-warn">{{ '{:,.0f}'.format(cost.avg_latency_ms) }} ms</span>
+          <span class="pill pill-warn">${{ '{:.5f}'.format(cost.cost_per_llm_txn_usd) }}</span>
+        </span>
+      </div>
+    </div>
+    <button class="btn btn-sm" style="margin-top:.7rem" data-drill="cost:latency"
+            data-drill-title="Decision latency">Latency detail</button>
+  </div>
+</section>
+
+<section class="glass card">
+  <div class="label">Be honest about this in the pitch</div>
+  <p class="small muted" style="margin:.5rem 0 0">
+    The rules are strong enough that the model adds little raw detection accuracy — recall is
+    100% either way. Its real value is the explanation an analyst needs to act, the cited
+    precedent that makes the decision auditable, and the learning loop that turns each
+    resolved case into future retrieval. Saying that, and showing you measured it, is worth
+    more than claiming an improvement you cannot evidence. The A/B is on the
+    <a href="{{ url_for('admin.evaluation_page') }}">Evaluation</a> page.
+  </p>
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  SBCharts.gauge(document.getElementById("avoided-gauge"), {{ cost.avoided_pct }}, {
+    display: "{{ '{:.1f}'.format(cost.avoided_pct) }}%",
+    sub: "no model call",
+  });
+
+  SBCharts.bars(document.getElementById("cost-bars"), [
+    { label: "Rules-first", value: {{ cost.actual_cost_usd }}, colour: "var(--ok)" },
+    { label: "All-model",   value: {{ cost.naive_cost_usd }},  colour: "var(--danger)" },
+  ], { height: 180 });
+</script>
+{% endblock %}

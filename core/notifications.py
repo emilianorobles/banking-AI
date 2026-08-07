@@ -212,6 +212,24 @@ def write_outbox(n: Notification) -> Path:
     return path
 
 
+def clear_outbox() -> int:
+    """Delete every recorded email. Called on a full reset.
+
+    The rows go when the database is dropped; without this the .eml files outlive them and
+    the outbox fills up with messages from rehearsals whose notifications no longer exist.
+    """
+    if not OUTBOX_DIR.exists():
+        return 0
+    removed = 0
+    for p in OUTBOX_DIR.glob("*.eml"):
+        try:
+            p.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 def eml_path(notification_id: str) -> Path | None:
     if not OUTBOX_DIR.exists():
         return None

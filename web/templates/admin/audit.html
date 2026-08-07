@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}Audit log · SentinelBank{% endblock %}
+{% block heading %}Audit log{% endblock %}
+{% block subheading %}
+  Every decision, tool call, approval and guardrail trip. No exceptions — in a regulated
+  domain an action nobody can reconstruct may as well not have happened.
+{% endblock %}
+
+{% block content %}
+
+<section class="between glass card" style="margin-bottom:var(--s-3)">
+  <form method="get" class="row" style="flex:1">
+    <input type="text" name="subject" value="{{ subject }}" style="max-width:260px"
+           placeholder="Filter by subject id (TXN-…, ALERT-…, CUST-…)">
+    <select name="event" style="width:auto">
+      <option value="">All events</option>
+      {% for e in events %}
+        <option value="{{ e }}" {{ 'selected' if event == e }}>{{ e }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn">Filter</button>
+    {% if subject or event %}
+      <a class="btn btn-ghost btn-sm" href="{{ url_for('admin.audit') }}">Clear</a>
+    {% endif %}
+  </form>
+
+  <div class="row nowrap">
+    <span class="label">Provider</span>
+    <span class="pill {{ 'pill-ok' if provider.llm_ok else 'pill-danger' }}">
+      chat {{ 'ok' if provider.llm_ok else 'down' }}
+    </span>
+    <span class="pill {{ 'pill-ok' if provider.embeddings_ok else 'pill-danger' }}">
+      embeddings {{ 'ok' if provider.embeddings_ok else 'down' }}
+    </span>
+    <span class="pill pill-violet">{{ provider.mode }}</span>
+  </div>
+</section>
+
+<section class="glass card">
+  <div class="between" style="margin-bottom:.6rem">
+    <div class="label">{{ rows|length }} entries</div>
+    <div class="tiny dim">Newest first</div>
+  </div>
+
+  <div class="tbl-wrap scroll-y" style="max-height:70vh">
+    <table class="tbl">
+      <thead>
+        <tr><th>When</th><th>Actor</th><th>Event</th><th>Subject</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td class="nowrap tiny dim">{{ r.timestamp|shortdt }}</td>
+            <td class="tiny mono">{{ r.actor }}</td>
+            <td>
+              <span class="pill {{
+                'pill-danger' if r.event_type in ('GUARDRAIL', 'CARD_FREEZE', 'CARD_LOST', 'LOGIN_FAILED')
+                else 'pill-ok' if r.event_type in ('APPROVAL', 'CARD_UNFREEZE', 'LOGIN')
+                else 'pill-violet' if r.event_type in ('TOOL_CALL', 'ROUTE', 'NOTIFY')
+                else 'pill-info' }}">{{ r.event_type }}</span>
+            </td>
+            <td class="tiny mono nowrap">{{ r.subject_id }}</td>
+            <td class="small">
+              {{ r.detail }}
+              {% if r.metadata %}
+                <div class="tiny dim mono" style="margin-top:.15rem">
+                  {% for k, v in r.metadata.items() %}{% if v not in (None, '', []) %}{{ k }}={{ v }} {% endif %}{% endfor %}
+                </div>
+              {% endif %}
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5" class="dim center">Nothing matches that filter.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% endblock %}

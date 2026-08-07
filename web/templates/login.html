@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · SentinelBank</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/glass.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-card glass">
+
+    <div class="login-side">
+      <div class="brand" style="margin-bottom:var(--s-4)">
+        <span class="brand-mark">🛡️</span>
+        <span>Sentinel<span class="dim">Bank</span></span>
+      </div>
+
+      <h1>Every transaction, screened before it lands.</h1>
+      <p class="muted small">
+        Deterministic rules score first and settle most of the volume on their own. Only the
+        genuinely ambiguous cases reach a model, which cites the historical case it reasoned
+        from. Nothing irreversible happens without a human saying yes.
+      </p>
+
+      <div class="stack" style="margin-top:var(--s-4)">
+        <div class="row"><span class="pill pill-ok">96%</span>
+          <span class="small muted">of transactions decided with no model call</span></div>
+        <div class="row"><span class="pill pill-info">100%</span>
+          <span class="small muted">fraud recall on the evaluation set</span></div>
+        <div class="row"><span class="pill pill-violet">0</span>
+          <span class="small muted">legitimate customers blocked</span></div>
+      </div>
+    </div>
+
+    <div class="login-form">
+      <h2>Sign in</h2>
+      <p class="small dim">Role decides what you can reach, not just what you can see.</p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+          <div class="note note-{{ 'danger' if category == 'danger' else 'warn' }}"
+               style="margin-bottom:var(--s-3)">{{ message }}</div>
+        {% endfor %}
+      {% endwith %}
+
+      <form method="post" action="{{ url_for('auth.login_post') }}">
+        <input type="hidden" name="next" value="{{ request.args.get('next', '') }}">
+
+        <label class="field">
+          <span class="label">Username</span>
+          <input type="text" name="username" value="{{ username or '' }}" autofocus required
+                 autocomplete="username">
+        </label>
+
+        <label class="field">
+          <span class="label">Password</span>
+          <input type="password" name="password" required autocomplete="current-password">
+        </label>
+
+        <button class="btn btn-primary btn-block btn-lg" type="submit"
+                style="margin-top:var(--s-2)">Sign in</button>
+      </form>
+
+      <hr class="divider">
+
+      <div class="label">Demo accounts</div>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr><th>Username</th><th>Password</th><th>Sees</th></tr></thead>
+          <tbody>
+            {% for name, u in demo_users.items() %}
+              <tr>
+                <td class="mono">{{ name }}</td>
+                <td class="mono dim">{{ u.password }}</td>
+                <td class="small muted">{{ u.label }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>

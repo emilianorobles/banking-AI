@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import stat, money_stat, txn_table, chart_card %}
+
+{% block title %}Spending · SentinelBank{% endblock %}
+{% block heading %}Spending{% endblock %}
+{% block subheading %}Where your money went, and where this month is heading.{% endblock %}
+
+{% block content %}
+
+<section class="grid g4" style="margin-bottom:var(--s-3)">
+  {{ money_stat('Last 30 days', spend.total_30d|money(spend.currency),
+                spend.transaction_count_30d ~ ' transactions', '', '💳') }}
+  {{ money_stat('Previous 30 days', spend.total_prev_30d|money(spend.currency),
+                spend.change_pct|pct(1) ~ ' change', '', '↔️') }}
+  {{ money_stat('Average transaction', spend.avg_transaction|money2(spend.currency),
+                'largest was ' ~ spend.largest_30d|money(spend.currency), '', '📐') }}
+  {{ money_stat('Projected month end', proj.projected_total|money(proj.currency),
+                'at ' ~ proj.daily_rate|money(proj.currency) ~ ' a day', 'spend:_total', '🔮') }}
+</section>
+
+<section class="split" style="margin-bottom:var(--s-3)">
+  {{ chart_card('Running total this month', 'run-total',
+                'against the pace that lands on last month’s figure', 'spend:_total') }}
+  {{ chart_card('By category', 'cat-donut', 'last 90 days — click a slice for the transactions') }}
+</section>
+
+<section class="split" style="margin-bottom:var(--s-3)">
+  {{ chart_card('Month by month', 'by-month', 'total spend per calendar month') }}
+
+  <div class="glass card">
+    <div class="label">Projected by category</div>
+    <div class="tiny dim">Run rate applied to each category separately.</div>
+    <div class="tbl-wrap" style="margin-top:.6rem">
+      <table class="tbl">
+        <thead><tr><th>Category</th><th class="num">So far</th><th class="num">Projected</th></tr></thead>
+        <tbody>
+          {% for cat, so_far, projected in proj.by_category_projected %}
+            <tr class="card-click" data-drill="spend:{{ cat }}" data-drill-title="{{ cat }}"
+                style="cursor:pointer">
+              <td>{{ cat }}</td>
+              <td class="num maskable"><span class="mask-target">{{ so_far|money(proj.currency) }}</span></td>
+              <td class="num maskable"><span class="mask-target">{{ projected|money(proj.currency) }}</span></td>
+            </tr>
+          {% else %}
+            <tr><td colspan="3" class="dim center">Nothing spent yet this month.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="split" style="margin-bottom:var(--s-3)">
+  <div class="glass card">
+    <div class="label">Top merchants</div>
+    <div class="tiny dim">Last 90 days, by total spend.</div>
+    <div class="tbl-wrap" style="margin-top:.6rem">
+      <table class="tbl">
+        <thead><tr><th>Merchant</th><th class="num">Visits</th><th class="num">Total</th></tr></thead>
+        <tbody>
+          {% for name, count, total in spend.top_merchants %}
+            <tr>
+              <td>{{ name }}</td>
+              <td class="num">{{ count }}</td>
+              <td class="num maskable"><span class="mask-target">{{ total|money(spend.currency) }}</span></td>
+            </tr>
+          {% else %}
+            <tr><td colspan="3" class="dim center">No merchants yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="glass card">
+    <div class="label">Spending alerts</div>
+    <div class="tiny dim">Tell the assistant a limit and it will watch it for you.</div>
+    {% if alerts %}
+      <div class="stack" style="margin-top:.7rem">
+        {% for a in alerts %}
+          <div class="between glass-2 card-tight" style="border-radius:var(--r-sm)">
+            <span class="small">Over <strong>{{ a.threshold|money(spend.currency) }}</strong>
+              per {{ a.period }}</span>
+            <span class="pill pill-ok">Watching</span>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="note" style="margin-top:.7rem">
+        No spending alerts set. Ask the assistant something like
+        <em>“alert me if I spend more than 5000 this month”</em>.
+      </div>
+    {% endif %}
+    <button class="btn btn-sm btn-primary" style="margin-top:.7rem"
+            data-ask="Alert me if I spend more than 5000 this month">Set one up</button>
+  </div>
+</section>
+
+<section class="glass card">
+  <div class="between" style="margin-bottom:.6rem">
+    <div>
+      <div class="label">All activity</div>
+      <div class="tiny dim">Every row opens the screening decision behind it.</div>
+    </div>
+  </div>
+  {{ txn_table(txns, {}, limit=40, show_risk=False) }}
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const DAILY = {{ spend.daily_current_month|tojson }};
+  const CATEGORIES = {{ spend.by_category[:8]|tojson }};
+  const BY_MONTH = {{ spend.by_month|tojson }};
+  const PREV_MONTH = {{ proj.previous_month }};
+
+  let running = 0;
+  const points = DAILY.map(([day, amount]) => {
+    running += amount;
+    return { label: day.slice(8), value: running, barValue: amount };
+  });
+  SBCharts.areaLine(document.getElementById("run-total"), { points }, {
+    barsToo: true, height: 260,
+    refs: PREV_MONTH > 0 ? [{ label: "last month", value: PREV_MONTH }] : [],
+  });
+
+  SBCharts.donut(
+    document.getElementById("cat-donut"),
+    CATEGORIES.map(([label, value]) => ({ label, value })),
+    { centreLabel: SBCharts.fmt(CATEGORIES.reduce((a, c) => a + c[1], 0)), centreSub: "90 days" }
+  );
+  document.querySelectorAll("#cat-donut .legend span").forEach((node, i) => {
+    if (!CATEGORIES[i]) return;
+    node.style.cursor = "pointer";
+    node.addEventListener("click", () => SB.drill("spend", CATEGORIES[i][0], CATEGORIES[i][0]));
+  });
+
+  SBCharts.bars(
+    document.getElementById("by-month"),
+    BY_MONTH.map(([label, value]) => ({ label, value })),
+    { height: 250 }
+  );
+</script>
+{% endblock %}

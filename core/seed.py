@@ -77,6 +77,15 @@ def seed(reset: bool = False, build_index: bool = True) -> dict:
             rag.reset_index(delete_disk=True)
         except Exception:
             pass
+        # Same reasoning for the outbox: the notification rows go with the database, and
+        # .eml files that outlive them are messages from a rehearsal that no longer exists.
+        try:
+            from . import notifications
+            removed = notifications.clear_outbox()
+            if removed:
+                print(f"  outbox cleared   {removed:>5}  recorded emails")
+        except Exception:
+            pass
         if not build_index:
             print("  ! index deleted and NOT rebuilt (--no-index).")
             print("    Retrieval is unavailable until: python -m core.seed --index-only")

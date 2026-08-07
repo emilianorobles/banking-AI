@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import stat %}
+
+{% block title %}Evaluation · SentinelBank{% endblock %}
+{% block heading %}Evaluation{% endblock %}
+{% block subheading %}
+  A held-out set with known labels, scored through the real pipeline. Most teams skip this;
+  it is a scored section of the rubric.
+{% endblock %}
+
+{% block content %}
+
+<section class="glass card" style="margin-bottom:var(--s-3)">
+  <div class="between">
+    <div>
+      <div class="label">Run the harness</div>
+      <div class="small muted" style="margin-top:.3rem">
+        Every case runs through <span class="mono tiny">pipeline.score_transaction</span> —
+        the same code path as a live transaction, not a stub.
+      </div>
+    </div>
+    <div class="row">
+      <label class="row small" style="gap:.4rem">
+        <input type="checkbox" id="allow-llm" checked style="width:auto">
+        Include the AI analyst
+      </label>
+      <button class="btn btn-primary" id="run-btn">▶ Run evaluation</button>
+    </div>
+  </div>
+
+  {% if not has_key %}
+    <div class="note note-warn" style="margin-top:.8rem">
+      No API key configured — the harness will run rules-only. That is still a valid
+      baseline, and it is what the A/B compares against.
+    </div>
+  {% endif %}
+
+  <div id="progress-wrap" class="hidden" style="margin-top:.9rem">
+    <div class="between" style="margin-bottom:.35rem">
+      <span class="small" id="progress-label">Starting…</span>
+      <span class="tiny dim" id="progress-count"></span>
+    </div>
+    <div class="bar"><i id="progress-bar" style="width:0%"></i></div>
+  </div>
+</section>
+
+<div id="results" class="{{ '' if eval.summary else 'hidden' }}">
+
+  <section class="grid g4" style="margin-bottom:var(--s-3)" id="headline"></section>
+
+  <section class="split" style="margin-bottom:var(--s-3)">
+    <div class="glass card">
+      <div class="label">Rules alone vs rules + AI analyst</div>
+      <div class="tiny dim">The comparison judges will ask for.</div>
+      <div class="tbl-wrap" style="margin-top:.7rem">
+        <table class="tbl" id="ab-table">
+          <thead><tr><th>Metric</th><th class="num">Rules only</th>
+                     <th class="num">With the agent</th><th class="num">Δ</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="note" style="margin-top:.7rem" id="ab-verdict"></div>
+    </div>
+
+    <div class="glass card">
+      <div class="label">Score separation</div>
+      <div class="tiny dim">Legitimate vs fraudulent, mean risk score.</div>
+      <div id="sep-chart" style="margin-top:.7rem"></div>
+      <div class="note note-ok small" style="margin-top:.7rem" id="sep-note"></div>
+    </div>
+  </section>
+
+  <section class="glass card">
+    <div class="between" style="margin-bottom:.6rem">
+      <div class="label">Case by case</div>
+      <div class="row">
+        <span class="pill pill-ok" id="pass-count"></span>
+        <span class="pill pill-danger" id="fail-count"></span>
+      </div>
+    </div>
+    <div class="tbl-wrap">
+      <table class="tbl" id="case-table">
+        <thead>
+          <tr><th>Case</th><th>Kind</th><th>Expected</th><th class="num">Risk</th>
+              <th>Action</th><th>AI</th><th>Cited</th><th class="num">ms</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<div id="empty" class="{{ 'hidden' if eval.summary else '' }}">
+  <div class="glass card center">
+    <div class="stat-value">🧪</div>
+    <h3>No results yet</h3>
+    <p class="muted small">Run the harness to score the held-out set.</p>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const INITIAL = {{ eval|tojson }};
+  const $ = id => document.getElementById(id);
+
+  function pct(v) { return (v * 100).toFixed(0) + "%"; }
+
+  function statCard(label, value, sub, tone) {
+    return `<div class="glass card">
+              <div class="label">${label}</div>
+              <div class="stat-value" ${tone ? `style="color:${tone}"` : ""}>${value}</div>
+              <div class="stat-sub">${sub}</div>
+            </div>`;
+  }
+
+  function render(data) {
+    const m = data.summary, c = data.comparison;
+    if (!m) return;
+
+    $("empty").classList.add("hidden");
+    $("results").classList.remove("hidden");
+
+    $("headline").innerHTML =
+      statCard("Recall (fraud caught)", pct(m.recall), `${m.tp} of ${m.tp + m.fn} fraud cases`,
+               m.recall >= 1 ? "var(--ok)" : "var(--warn)") +
+      statCard("Legitimate blocked", m.blocked_legit, `of ${m.legit_n} legitimate customers`,
+               m.blocked_legit === 0 ? "var(--ok)" : "var(--danger)") +
+      statCard("Groundedness", pct(m.groundedness),
+               `${m.fabricated} fabricated citation${m.fabricated === 1 ? "" : "s"}`,
+               m.fabricated === 0 ? "var(--ok)" : "var(--danger)") +
+      statCard("p95 latency", `${Math.round(m.p95_latency_ms)} ms`,
+               `$${m.total_cost_usd.toFixed(4)} to run`);
+
+    if (c) {
+      const rows = [
+        ["Recall", c.baseline.recall, c.full.recall, true],
+        ["Precision", c.baseline.precision, c.full.precision, true],
+        ["False positive rate", c.baseline.fpr, c.full.fpr, true],
+        ["Legitimate blocked", c.baseline.blocked_legit, c.full.blocked_legit, false],
+        ["Legitimate challenged", c.baseline.friction_legit, c.full.friction_legit, false],
+        ["Mean risk on legitimate", c.baseline.avg_score_legit, c.full.avg_score_legit, false],
+        ["Separation", c.baseline.separation, c.full.separation, false],
+      ];
+      $("ab-table").querySelector("tbody").innerHTML = rows.map(([label, b, f, isPct]) => {
+        const fmt = v => isPct ? pct(v) : (typeof v === "number" ? v.toFixed(1).replace(/\.0$/, "") : v);
+        const delta = f - b;
+        const colour = Math.abs(delta) < 0.001 ? "var(--ink-3)"
+                     : (label.includes("blocked") || label.includes("challenged") || label.includes("false"))
+                       ? (delta < 0 ? "var(--ok)" : "var(--danger)")
+                       : (delta > 0 ? "var(--ok)" : "var(--danger)");
+        return `<tr><td>${label}</td><td class="num">${fmt(b)}</td>
+                <td class="num">${fmt(f)}</td>
+                <td class="num" style="color:${colour}">${delta === 0 ? "—" : (delta > 0 ? "+" : "") + fmt(delta)}</td></tr>`;
+      }).join("");
+
+      $("ab-verdict").innerHTML =
+        `<strong>${c.delta.false_positives_removed} false positive` +
+        `${c.delta.false_positives_removed === 1 ? "" : "s"} removed</strong> by the agent, ` +
+        `with ${c.delta.fraud_missed_added} extra fraud missed. ` +
+        `The rules are already strong — the agent's value is the explanation, the cited ` +
+        `precedent, and the learning loop, not raw detection.`;
+
+      SBCharts.bars($("sep-chart"), [
+        { label: "Legitimate", value: m.avg_score_legit, colour: "var(--ok)" },
+        { label: "Fraud", value: m.avg_score_fraud, colour: "var(--danger)" },
+      ], { height: 200 });
+
+      $("sep-note").textContent =
+        `Mean risk ${m.avg_score_legit.toFixed(1)} on legitimate customers versus ` +
+        `${m.avg_score_fraud.toFixed(1)} on fraud — a separation of ${m.separation.toFixed(1)} points. ` +
+        `A wide gap is what lets the cheap path decide most transactions on its own.`;
+    }
+
+    const results = data.results || [];
+    $("pass-count").textContent = results.filter(r => r.correct).length + " correct";
+    $("fail-count").textContent = results.filter(r => !r.correct).length + " wrong";
+    $("case-table").querySelector("tbody").innerHTML = results.map(r => `
+      <tr>
+        <td class="mono tiny">${SB.escapeHtml(r.txn_id || "")}</td>
+        <td class="small">${SB.escapeHtml(r.eval_kind || "")}</td>
+        <td><span class="pill ${r.label === "fraud" ? "pill-danger" : "pill-ok"}">${r.label}</span></td>
+        <td class="num">${r.risk_score}</td>
+        <td class="small">${SB.escapeHtml(r.action || "")}</td>
+        <td>${r.llm_used ? '<span class="pill pill-violet">AI</span>' : '<span class="dim tiny">rules</span>'}</td>
+        <td class="tiny dim">${(r.cited || []).join(", ") || "—"}</td>
+        <td class="num tiny">${r.latency_ms}</td>
+        <td>${r.correct ? "✅" : "❌"}</td>
+      </tr>`).join("");
+  }
+
+  async function poll() {
+    const d = await SB.getJSON("/ops/evaluation/status");
+    if (d.state === "running") {
+      $("progress-wrap").classList.remove("hidden");
+      const pctDone = d.total ? (d.done / d.total * 100) : 0;
+      $("progress-bar").style.width = pctDone + "%";
+      $("progress-label").textContent = "Scoring the held-out set…";
+      $("progress-count").textContent = `${d.done} of ${d.total || "?"}`;
+      setTimeout(poll, 900);
+      return;
+    }
+    $("progress-wrap").classList.add("hidden");
+    $("run-btn").disabled = false;
+    if (d.state === "error") {
+      SB.toast("Evaluation failed", d.error, "danger", 12000);
+      return;
+    }
+    if (d.state === "done") {
+      render(d);
+      SB.toast("Evaluation complete", `${d.total} cases scored.`, "ok");
+    }
+  }
+
+  $("run-btn").addEventListener("click", async () => {
+    $("run-btn").disabled = true;
+    $("progress-wrap").classList.remove("hidden");
+    $("progress-bar").style.width = "0%";
+    try {
+      await SB.postJSON("/ops/evaluation/run", { allow_llm: $("allow-llm").checked });
+      poll();
+    } catch (err) {
+      $("run-btn").disabled = false;
+      SB.toast("Couldn't start", err.message, "danger");
+    }
+  });
+
+  if (INITIAL.summary) render(INITIAL);
+  if (INITIAL.state === "running") { $("run-btn").disabled = true; poll(); }
+</script>
+{% endblock %}

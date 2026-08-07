@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block title %}Notifications · SentinelBank{% endblock %}
+{% block heading %}Notifications{% endblock %}
+{% block subheading %}
+  Every action taken on your account raises one of these. Open any of them to read the
+  email exactly as it would be delivered.
+{% endblock %}
+
+{% block content %}
+
+<section class="between glass card" style="margin-bottom:var(--s-3)">
+  <div>
+    <div class="label">Delivery</div>
+    {% if smtp.configured %}
+      <div class="small">
+        <span class="pill pill-ok">SMTP live</span>
+        Sending through <span class="mono">{{ smtp.host }}:{{ smtp.port }}</span>
+        as <span class="mono">{{ smtp['from'] }}</span>.
+      </div>
+    {% else %}
+      <div class="small muted">
+        <span class="pill pill-warn">Outbox only</span>
+        No mail gateway is configured, so nothing is actually delivered — and we are not
+        going to claim otherwise. Each message is rendered in full and written as a real
+        <span class="mono">.eml</span> to <span class="mono tiny">{{ outbox_dir }}</span>,
+        openable in any mail client.
+      </div>
+      <div class="tiny dim" style="margin-top:.35rem">
+        Set <span class="mono">SMTP_HOST</span>, <span class="mono">SMTP_PORT</span>,
+        <span class="mono">SMTP_USER</span> and <span class="mono">SMTP_PASSWORD</span>
+        in your environment and real sending switches on automatically.
+      </div>
+    {% endif %}
+  </div>
+  {% if unread %}
+    <form method="post" action="{{ url_for('notifications.read_all') }}">
+      <button class="btn btn-sm">Mark all {{ unread }} read</button>
+    </form>
+  {% endif %}
+</section>
+
+<section class="stack">
+  {% for n in rows %}
+    <article class="glass card {{ 'glass-2' if not n.read }}">
+      <div class="between" style="align-items:flex-start;gap:var(--s-3)">
+        <div style="min-width:0">
+          <div class="row">
+            <span class="pill pill-{{ 'danger' if n.severity == 'danger' else 'warn' if n.severity == 'warn' else 'ok' if n.severity == 'ok' else 'info' }}">
+              {{ {'danger': 'Security alert', 'warn': 'Attention needed',
+                  'ok': 'Confirmation'}.get(n.severity, 'Notice') }}
+            </span>
+            <span class="tiny dim mono">{{ n.kind }}</span>
+            {% if not n.read %}<span class="pill pill-violet">New</span>{% endif %}
+          </div>
+
+          <h3 style="margin:.5rem 0 .2rem">{{ n.subject }}</h3>
+          <div class="small muted">{{ n.body }}</div>
+          {% if n.detail %}
+            <div class="note small" style="margin-top:.5rem">{{ n.detail }}</div>
+          {% endif %}
+
+          <div class="tiny dim" style="margin-top:.5rem">
+            {{ n.created_at|shortdt }} ·
+            channels: {{ n.channels }}
+            {% if 'smtp' in n.channels %}
+              <span class="pill pill-ok" style="margin-left:.3rem">Delivered</span>
+            {% else %}
+              <span class="pill pill-warn" style="margin-left:.3rem">Not delivered</span>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="stack nowrap">
+          <a class="btn btn-sm btn-primary"
+             href="{{ url_for('notifications.email_view', notification_id=n.notification_id) }}">
+            ✉️ Read the email
+          </a>
+          <a class="btn btn-sm btn-ghost"
+             href="{{ url_for('notifications.download', notification_id=n.notification_id) }}">
+            ⬇ .eml
+          </a>
+        </div>
+      </div>
+    </article>
+  {% else %}
+    <div class="glass card center">
+      <div class="stat-value">📭</div>
+      <h3>Nothing yet</h3>
+      <p class="muted small">
+        Freeze your card, file a travel notice, or ask the assistant to do something —
+        every action lands here with the email it would have sent.
+      </p>
+    </div>
+  {% endfor %}
+</section>
+
+{% endblock %}

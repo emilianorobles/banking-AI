@@ -8,7 +8,6 @@ whole presentation layer touched no rule, no agent and no part of the pipeline.
 from __future__ import annotations
 
 import os
-import secrets
 from datetime import timedelta
 
 from flask import Flask, render_template, session
@@ -57,10 +56,17 @@ def create_app() -> Flask:
             "cached": llm.cache_size(),
             "model": config.CHAT_MODEL,
         }
+        # Staff get a customer switcher in the header; a customer never does, so we do not
+        # pay for the query on their pages.
+        customers = []
+        if user and user.get("role") in ("analyst", "admin"):
+            customers = db.list_customers(limit=200)
+
         return {
             "user": user,
             "sb_health": health,
             "active_customer_id": auth_module.active_customer_id() if user else None,
+            "all_customers": customers,
         }
 
     @app.template_filter("money")

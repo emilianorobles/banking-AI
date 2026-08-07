@@ -1,0 +1,139 @@
+{# Shared building blocks. Anything that appears on more than one page lives here so the
+   customer portal and the analyst console stay visually identical -- they are one product,
+   not two that happen to share a stylesheet. #}
+
+{# A number with its label, and the drill-down that explains it. `drill` is "kind:key" and
+   is handled generically by wireDrilldowns() in app.js -- no per-card JS, ever. #}
+{% macro stat(label, value, sub='', drill='', icon='', tone='') %}
+  <div class="glass card {{ 'card-click' if drill }}"
+       {% if drill %}data-drill="{{ drill }}" data-drill-title="{{ label }}"{% endif %}>
+    <div class="label stat-label">{% if icon %}<span>{{ icon }}</span>{% endif %}{{ label }}</div>
+    <div class="stat-value {{ tone }}">{{ value }}</div>
+    {% if sub %}<div class="stat-sub">{{ sub }}</div>{% endif %}
+  </div>
+{% endmacro %}
+
+
+{# Same, but the figure is money and therefore hidden by default. .mask-target is what
+   app.js blurs; the label stays readable so the page still makes sense masked. #}
+{% macro money_stat(label, value, sub='', drill='', icon='') %}
+  <div class="glass card maskable {{ 'card-click' if drill }}"
+       {% if drill %}data-drill="{{ drill }}" data-drill-title="{{ label }}"{% endif %}>
+    <div class="label stat-label">{% if icon %}<span>{{ icon }}</span>{% endif %}{{ label }}</div>
+    <div class="stat-value mask-target">{{ value }}</div>
+    {% if sub %}<div class="stat-sub mask-target">{{ sub }}</div>{% endif %}
+  </div>
+{% endmacro %}
+
+
+{% macro risk_pill(score) %}
+  {% if score < 30 %}<span class="pill pill-ok">Risk {{ score }}</span>
+  {% elif score < 70 %}<span class="pill pill-warn">Risk {{ score }}</span>
+  {% else %}<span class="pill pill-danger">Risk {{ score }}</span>{% endif %}
+{% endmacro %}
+
+
+{% macro action_pill(action) %}
+  {% if action == 'ALLOW' %}<span class="pill pill-ok">Allowed</span>
+  {% elif action == 'CHALLENGE' %}<span class="pill pill-warn">Verification asked</span>
+  {% elif action in ('FREEZE_AND_ESCALATE', 'QUARANTINE') %}<span class="pill pill-danger">Stopped</span>
+  {% else %}<span class="pill pill-info">{{ action }}</span>{% endif %}
+{% endmacro %}
+
+
+{# One health or security component as a clickable card. This is the request in one macro:
+   the card states the verdict, and clicking it shows what produced the verdict. #}
+{% macro check_card(check) %}
+  <div class="glass card card-click" data-drill="security:{{ check.key }}"
+       data-drill-title="{{ check.label }}">
+    <div class="row between" style="align-items:flex-start">
+      <div class="label">{{ check.label }}</div>
+      {% if check.passed %}<span class="pill pill-ok">PASS</span>
+      {% else %}<span class="pill pill-warn">ACTION</span>{% endif %}
+    </div>
+    <div class="small muted" style="margin-top:.45rem">{{ check.detail }}</div>
+    {% if check.inputs %}
+      <div class="tiny dim" style="margin-top:.5rem">
+        {% for k, v in check.inputs.items() %}{% if loop.index <= 2 %}
+          {{ k.replace('_', ' ') }}: <span class="mono">{{ v }}</span>{{ ' · ' if not loop.last and loop.index < 2 }}
+        {% endif %}{% endfor %}
+      </div>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+
+{% macro health_card(c) %}
+  <div class="glass card card-click" data-drill="health:{{ c.key }}"
+       data-drill-title="{{ c.label }}">
+    <div class="row between" style="align-items:flex-start">
+      <div class="label">{{ c.label }}</div>
+      <span class="pill {{ 'pill-ok' if c.pct >= 75 else 'pill-warn' if c.pct >= 45 else 'pill-danger' }}">
+        {{ c.earned }}/{{ c.max }}
+      </span>
+    </div>
+    <div class="bar" style="margin:.6rem 0 .5rem">
+      <i style="width:{{ c.pct }}%"></i>
+    </div>
+    <div class="small muted">{{ c.detail }}</div>
+  </div>
+{% endmacro %}
+
+
+{# Transaction list. Every row drills into the rules that fired on it. #}
+{% macro txn_table(txns, decisions, limit=12, show_risk=True) %}
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>When</th><th>Merchant</th><th>Where</th>
+          <th class="num">Amount</th>
+          {% if show_risk %}<th>Screening</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in txns[:limit] %}
+          {% set d = decisions.get(t.txn_id) %}
+          <tr class="card-click" data-drill="txn:{{ t.txn_id }}"
+              data-drill-title="{{ t.merchant }}" style="cursor:pointer">
+            <td class="nowrap dim small">{{ t.timestamp|shortdt }}</td>
+            <td>
+              <div style="font-weight:600">{{ t.merchant }}</div>
+              <div class="tiny dim">{{ t.merchant_category }} · {{ t.channel.replace('_', ' ') }}</div>
+            </td>
+            <td class="small muted nowrap">{{ t.city }}, {{ t.country }}</td>
+            <td class="num nowrap maskable"><span class="mask-target">{{ t.amount|money2(t.currency) }}</span></td>
+            {% if show_risk %}
+              <td class="nowrap">
+                {% if d %}{{ action_pill(d.action) }}
+                  {% if d.llm_used %}<span class="pill pill-violet" title="An AI analyst reviewed this">AI</span>{% endif %}
+                {% else %}<span class="pill pill-info">Pending</span>{% endif %}
+              </td>
+            {% endif %}
+          </tr>
+        {% else %}
+          <tr><td colspan="{{ 5 if show_risk else 4 }}" class="dim center">No transactions yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endmacro %}
+
+
+{# A chart slot. The template supplies data as JSON; a small script in the page draws it.
+   Everything renders from local SVG -- no CDN, so the demo survives with wifi off. #}
+{% macro chart_card(title, id, sub='', drill='', height='') %}
+  <div class="glass card">
+    <div class="row between">
+      <div>
+        <div class="label">{{ title }}</div>
+        {% if sub %}<div class="tiny dim">{{ sub }}</div>{% endif %}
+      </div>
+      {% if drill %}
+        <button class="btn btn-sm btn-ghost" data-drill="{{ drill }}"
+                data-drill-title="{{ title }}">Why?</button>
+      {% endif %}
+    </div>
+    <div id="{{ id }}" style="margin-top:.7rem;{{ height }}"></div>
+  </div>
+{% endmacro %}

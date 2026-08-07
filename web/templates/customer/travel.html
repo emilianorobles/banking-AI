@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Travel · SentinelBank{% endblock %}
+{% block heading %}Travel{% endblock %}
+{% block subheading %}
+  Tell us where you're going and the geography rules stop firing on you — without weakening
+  anything else.
+{% endblock %}
+
+{% block content %}
+
+<section class="split" style="margin-bottom:var(--s-3)">
+
+  <div class="glass card">
+    <div class="label">File a travel notice</div>
+    <div class="small muted" style="margin:.4rem 0 .8rem">
+      Two rules stop firing while a notice is active: <span class="mono tiny">GEO_FOREIGN</span>
+      and <span class="mono tiny">GEO_NEW_COUNTRY</span>. Everything else — amount anomalies,
+      velocity, card testing, impossible travel — keeps running exactly as before. A travel
+      notice is not a blank cheque, and the drill-down on any transaction will show you which
+      rules were suppressed and which still ran.
+    </div>
+
+    <form method="post" action="{{ url_for('customer.file_notice') }}">
+      <label class="field">
+        <span class="label">Countries (ISO-2, comma separated)</span>
+        <input type="text" name="countries" placeholder="ES, FR" required
+               value="{{ request.args.get('countries', '') }}">
+      </label>
+      <div class="grid g2">
+        <label class="field">
+          <span class="label">From</span>
+          <input type="date" name="start_date" value="{{ today }}" required>
+        </label>
+        <label class="field">
+          <span class="label">To</span>
+          <input type="date" name="end_date" value="{{ default_end }}" required>
+        </label>
+      </div>
+      <button class="btn btn-primary btn-block">✈️ File travel notice</button>
+    </form>
+
+    <div class="row" style="margin-top:.7rem">
+      <span class="tiny dim">Or just say it:</span>
+      <button class="btn btn-sm btn-ghost"
+              data-ask="I'm travelling to Spain for the next 10 days">Tell the assistant</button>
+    </div>
+  </div>
+
+  <div class="glass card">
+    <div class="label">Plan a travel budget</div>
+    <div class="small muted" style="margin:.4rem 0 .8rem">
+      The assistant works this out from your own spending baseline — not a generic
+      per-country average — and offers to file the notice at the same time.
+    </div>
+
+    <label class="field">
+      <span class="label">Destination</span>
+      <input type="text" id="dest" placeholder="Spain" value="Spain">
+    </label>
+    <label class="field">
+      <span class="label">Days</span>
+      <input type="number" id="days" min="1" max="120" value="8">
+    </label>
+    <button class="btn btn-ok btn-block" id="plan-btn" type="button">
+      💡 Plan my budget
+    </button>
+
+    <div class="note" style="margin-top:.8rem">
+      <strong>What it uses:</strong> your average daily spend over the last 90 days, your
+      typical transaction size, and the destination's cost level relative to home — then
+      shows the arithmetic so you can argue with it.
+    </div>
+  </div>
+</section>
+
+<section class="glass card" style="margin-bottom:var(--s-3)">
+  <div class="label">Active notices</div>
+  {% if notices %}
+    <div class="stack" style="margin-top:.7rem">
+      {% for n in notices %}
+        <div class="between glass-2 card" style="border-radius:var(--r-sm)">
+          <div>
+            <div style="font-weight:700">✈️ {{ n.countries|join(', ') }}</div>
+            <div class="small muted">{{ n.start_date }} → {{ n.end_date }}</div>
+            <div class="tiny dim">Filed {{ n.created_at|shortdt }} · {{ n.notice_id }}</div>
+          </div>
+          <div class="row">
+            <span class="pill pill-ok">Active</span>
+            <form method="post" action="{{ url_for('customer.cancel_notice', notice_id=n.notice_id) }}"
+                  onsubmit="return confirm('Cancel this travel notice? Foreign transactions will be screened normally again.')">
+              <button class="btn btn-sm btn-ghost">Cancel</button>
+            </form>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="note note-warn" style="margin-top:.7rem">
+      No active travel notice. Card transactions outside
+      {{ customer.home_country if customer else 'your home country' }} will score higher
+      than usual and may be challenged.
+    </div>
+  {% endif %}
+</section>
+
+{% if all_notices %}
+  <section class="glass card">
+    <div class="label">History</div>
+    <div class="tbl-wrap" style="margin-top:.6rem">
+      <table class="tbl">
+        <thead><tr><th>Countries</th><th>From</th><th>To</th><th>Filed via</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for n in all_notices %}
+            <tr>
+              <td>{{ n.countries|join(', ') }}</td>
+              <td class="small muted">{{ n.start_date }}</td>
+              <td class="small muted">{{ n.end_date }}</td>
+              <td class="small dim">{{ n.created_via }}</td>
+              <td>
+                {% if n.active %}<span class="pill pill-ok">Active</span>
+                {% else %}<span class="pill pill-info">Ended</span>{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  /* Routes the request through the assistant rather than a bespoke endpoint, so the
+     budget you get here is the same one the agent gives -- one implementation, not two. */
+  document.getElementById("plan-btn").addEventListener("click", () => {
+    const dest = document.getElementById("dest").value.trim() || "Spain";
+    const days = document.getElementById("days").value || "7";
+    SBChat.ask(`Plan my travel budget for ${dest} for ${days} days`);
+  });
+</script>
+{% endblock %}

@@ -18,7 +18,7 @@ from __future__ import annotations
 import time
 from typing import Any, Callable
 
-from . import config, db, llm, rag, rules, security, travel
+from . import config, db, llm, notifications, rag, rules, security, travel
 from .agents import fraud_analyst
 from .contracts import (
     Alert,
@@ -357,6 +357,39 @@ def _persist(txn: Transaction, decision: Decision, customer: Customer | None) ->
             db.audit(actor="system", event_type="CARD_FREEZE",
                      subject_id=customer.customer_id,
                      detail=f"Card frozen pending analyst approval (alert {alert.alert_id})")
+
+        _notify_customer(txn, decision, alert)
+
+
+def _notify_customer(txn: Transaction, decision: Decision, alert: Alert) -> None:
+    """Tell the customer their card was stopped or questioned.
+
+    A bank that freezes a card silently and waits for the customer to discover it at a
+    till has solved the fraud problem and created a worse one. Wrapped so a notification
+    failure can never undo a decision that has already been persisted.
+    """
+    stopped = decision.action in ("FREEZE_AND_ESCALATE", "QUARANTINE")
+    try:
+        notifications.notify(
+            txn.customer_id,
+            kind="fraud_alert" if stopped else "verification",
+            severity="danger" if stopped else "warn",
+            subject=(f"We stopped a {txn.amount:,.0f} {txn.currency} transaction"
+                     if stopped else
+                     f"Was this you? {txn.amount:,.0f} {txn.currency} at {txn.merchant}"),
+            body=(f"A {txn.amount:,.2f} {txn.currency} transaction at {txn.merchant} in "
+                  f"{txn.city}, {txn.country} scored {decision.risk_score}/100 and was "
+                  + ("blocked. Your card is frozen while we check with you."
+                     if stopped else
+                     "held for you to confirm. Nothing has been taken yet.")),
+            detail=decision.reasoning,
+            related_id=alert.alert_id,
+            txn_id=txn.txn_id,
+            risk_score=decision.risk_score,
+            cited_cases=", ".join(decision.cited_case_ids or []),
+        )
+    except Exception:
+        pass
 
 
 # --------------------------------------------------------------------------- #

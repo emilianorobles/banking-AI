@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% from "partials/macros.html" import risk_pill, action_pill %}
+
+{% block title %}Alerts · SentinelBank{% endblock %}
+{% block heading %}Alerts{% endblock %}
+{% block subheading %}
+  Transactions we stopped or questioned. Your answer trains the system — both answers are
+  equally useful.
+{% endblock %}
+
+{% block content %}
+
+{% if pending %}
+  <div class="note note-warn" style="margin-bottom:var(--s-3)">
+    <strong>{{ pending|length }} waiting on you.</strong>
+    Confirming fraud freezes your card immediately. Confirming a transaction was genuine
+    records it so similar activity is less likely to be flagged again.
+  </div>
+{% endif %}
+
+<section class="stack">
+  {% for a in alerts %}
+    {% set t = txns.get(a.txn_id) %}
+    {% set d = decisions.get(a.txn_id) %}
+    <article class="glass card">
+
+      <div class="between" style="align-items:flex-start;gap:var(--s-3)">
+        <div style="min-width:0">
+          <div class="row">
+            {{ risk_pill(a.risk_score) }}
+            <span class="pill {{ 'pill-danger' if a.priority in ('P1','CRITICAL') else 'pill-warn' }}">
+              {{ a.priority }}
+            </span>
+            {% if a.status == 'PENDING' %}
+              <span class="pill pill-info">Waiting on you</span>
+            {% elif a.outcome == 'confirmed_fraud' %}
+              <span class="pill pill-danger">Confirmed fraud</span>
+            {% else %}
+              <span class="pill pill-ok">Cleared</span>
+            {% endif %}
+            {% if d and d.llm_used %}<span class="pill pill-violet">AI reviewed</span>{% endif %}
+            {% if d and d.suppressed_by_travel %}
+              <span class="pill pill-info">Travel notice applied</span>
+            {% endif %}
+          </div>
+
+          <h3 style="margin:.55rem 0 .2rem">{{ a.summary }}</h3>
+
+          {% if t %}
+            <div class="small muted maskable">
+              <span class="mask-target">{{ t.amount|money2(t.currency) }}</span>
+              at <strong>{{ t.merchant }}</strong> — {{ t.city }}, {{ t.country }}
+              · {{ t.channel.replace('_', ' ') }} · {{ t.timestamp|shortdt }}
+            </div>
+          {% endif %}
+        </div>
+
+        <button class="btn btn-sm nowrap" data-drill="txn:{{ a.txn_id }}"
+                data-drill-title="{{ t.merchant if t else a.txn_id }}">
+          Why was this flagged?
+        </button>
+      </div>
+
+      {% if d and d.rule_hits %}
+        <div class="row" style="margin-top:.7rem">
+          {% for h in d.rule_hits %}
+            <button class="pill pill-warn" style="cursor:pointer;border:0;font-family:inherit"
+                    data-drill="rule:{{ h.rule_id }}" data-drill-title="{{ h.rule_id }}">
+              {{ h.rule_id }} +{{ h.weight }}
+            </button>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% if d and d.reasoning %}
+        <div class="note" style="margin-top:.7rem">
+          <div class="label" style="margin-bottom:.2rem">Why we thought so</div>
+          <div class="small">{{ d.reasoning }}</div>
+          {% if d.cited_case_ids %}
+            <div class="tiny dim" style="margin-top:.4rem">
+              Reasoned against past cases {{ d.cited_case_ids|join(', ') }} — not invented.
+            </div>
+          {% endif %}
+        </div>
+      {% endif %}
+
+      {% if a.status == 'PENDING' %}
+        <hr class="divider">
+        <div class="between">
+          <div class="small muted">Was this you?</div>
+          <div class="row">
+            <form method="post" action="{{ url_for('customer.respond_alert', alert_id=a.alert_id) }}"
+                  onsubmit="return confirm('Confirm this was fraud? Your card will be frozen immediately.')">
+              <input type="hidden" name="verdict" value="fraud">
+              <button class="btn btn-sm btn-danger">🚨 No — this wasn't me</button>
+            </form>
+            <form method="post" action="{{ url_for('customer.respond_alert', alert_id=a.alert_id) }}">
+              <input type="hidden" name="verdict" value="genuine">
+              <button class="btn btn-sm btn-ok">✅ Yes — that was me</button>
+            </form>
+          </div>
+        </div>
+      {% else %}
+        <hr class="divider">
+        <div class="small dim">
+          Resolved by {{ a.resolved_by }} at {{ a.resolved_at|shortdt }}
+          {% if a.analyst_note %} — “{{ a.analyst_note }}”{% endif %}
+          {% if a.learned_case_id %}
+            <div class="tiny" style="margin-top:.25rem">
+              📚 Written into the knowledge store as
+              <span class="mono">{{ a.learned_case_id }}</span> — the system can cite it
+              when judging similar transactions from now on.
+            </div>
+          {% endif %}
+        </div>
+      {% endif %}
+    </article>
+  {% else %}
+    <div class="glass card center">
+      <div class="stat-value">🎉</div>
+      <h3>Nothing needs your attention</h3>
+      <p class="muted small">
+        No transaction on your account has been stopped or questioned.
+      </p>
+    </div>
+  {% endfor %}
+</section>
+
+{% endblock %}

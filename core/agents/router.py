@@ -17,7 +17,8 @@ from ..contracts import Intent
 _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (Intent.TRAVEL.value, re.compile(
         r"\b(travel|travell?ing|trip|holiday|vacation|abroad|overseas|flying to|"
-        r"going to \w+ (next|this|on)|visit(ing)? \w+ (next|this)|business trip)\b",
+        r"going to \w+ (next|this|on|for)|visit(ing)? \w+ (next|this)|business trip|"
+        r"budget for \w+|plan my budget)\b",
         re.IGNORECASE)),
     (Intent.FRAUD_REPORT.value, re.compile(
         r"\b(fraud|scam|stolen|lost my card|unauthorised|unauthorized|didn'?t make|"
@@ -28,9 +29,15 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (Intent.CARD_CONTROL.value, re.compile(
         r"\b(freeze|block|lock|unfreeze|unblock|unlock|cancel) (my )?card\b",
         re.IGNORECASE)),
+    # Security questions route to BALANCE, which reaches get_security_status. They sit
+    # above the transactions pattern because "is my account secure" contains "account"
+    # and would otherwise be answered with a list of charges.
+    (Intent.BALANCE.value, re.compile(
+        r"\b(security review|security score|security check|how secure|is my account "
+        r"(safe|secure)|account health|password|two.?factor|2fa)\b", re.IGNORECASE)),
     (Intent.TRANSACTIONS.value, re.compile(
         r"\b(transaction|payment|charge|spend|spent|purchase|activity|statement|"
-        r"recent|history)\b", re.IGNORECASE)),
+        r"recent|history|budget alert|spending alert|alert me)\b", re.IGNORECASE)),
     (Intent.BALANCE.value, re.compile(
         r"\b(balance|how much.*(have|left)|account summary|overview|my account)\b",
         re.IGNORECASE)),
@@ -81,16 +88,30 @@ def classify(message: str, *, allow_llm: bool = True) -> tuple[str, str, bool]:
 
 # Which tools each intent is allowed to reach. Narrowing the surface per intent means a
 # message classified as "balance" cannot be talked into freezing a card.
+#
+# Read-only tools appear in several lists; anything that writes appears only where that
+# action is plausibly what the customer asked for. `report_card_lost` is reachable from
+# fraud and card control and nowhere else, which is the whole point of routing by intent
+# rather than handing the model the full registry.
 INTENT_TOOLS: dict[str, list[str]] = {
-    Intent.BALANCE.value: ["get_account_summary", "list_travel_notices"],
-    Intent.TRANSACTIONS.value: ["list_recent_transactions", "get_account_summary"],
+    Intent.BALANCE.value: ["get_account_summary", "list_travel_notices",
+                           "get_security_status", "get_statement",
+                           "list_my_notifications"],
+    Intent.TRANSACTIONS.value: ["list_recent_transactions", "get_account_summary",
+                                "get_statement", "set_spending_alert",
+                                "list_my_notifications"],
     Intent.DISPUTE.value: ["list_recent_transactions", "raise_dispute", "get_account_summary"],
     Intent.FRAUD_REPORT.value: ["list_recent_transactions", "freeze_card", "raise_dispute",
-                                "search_fraud_precedents", "get_account_summary"],
-    Intent.TRAVEL.value: ["set_travel_notice", "list_travel_notices", "get_account_summary"],
-    Intent.CARD_CONTROL.value: ["freeze_card", "unfreeze_card", "get_account_summary"],
+                                "search_fraud_precedents", "get_account_summary",
+                                "report_card_lost", "get_security_status"],
+    Intent.TRAVEL.value: ["set_travel_notice", "list_travel_notices", "get_account_summary",
+                          "plan_travel_budget"],
+    Intent.CARD_CONTROL.value: ["freeze_card", "unfreeze_card", "get_account_summary",
+                                "report_card_lost"],
     Intent.GENERAL.value: ["get_account_summary", "list_recent_transactions",
-                           "list_travel_notices", "search_fraud_precedents"],
+                           "list_travel_notices", "search_fraud_precedents",
+                           "get_security_status", "get_statement",
+                           "plan_travel_budget", "list_my_notifications"],
 }
 
 
