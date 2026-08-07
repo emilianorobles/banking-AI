@@ -97,10 +97,30 @@ def set_telemetry_sink(fn) -> None:
 
 @lru_cache(maxsize=1)
 def _http_client():
+    """Client for the PRIMARY, on the short budget.
+
+    The lab endpoint sits behind a TLS-intercepting proxy. Verification off is required
+    by the organizer guides; it is a lab constraint, not a design choice.
+
+    The timeout here is what actually bounds the wait -- `ChatOpenAI(timeout=...)` is
+    passed too, but when an explicit `http_client` is supplied it is httpx that enforces
+    it. Both are set so neither can be the thing that was forgotten.
+    """
     import httpx
-    # The lab endpoint sits behind a TLS-intercepting proxy. Verification off is
-    # required by the organizer guides; it is a lab constraint, not a design choice.
-    return httpx.Client(verify=False, timeout=config.LLM_TIMEOUT_SECONDS)
+    return httpx.Client(verify=False, timeout=config.PRIMARY_TIMEOUT_SECONDS)
+
+
+@lru_cache(maxsize=1)
+def _fallback_http_client():
+    """Client for the SECONDARY, on the longer budget.
+
+    A separate client, not the primary's: they previously shared one, which meant the two
+    stages could never have different timeouts -- and the whole point of a failover is
+    that the first stage gives up quickly and the second one is allowed to take its time,
+    because by then it is the only thing that can still answer.
+    """
+    import httpx
+    return httpx.Client(verify=False, timeout=config.FALLBACK_TIMEOUT_SECONDS)
 
 
 @lru_cache(maxsize=1)
@@ -113,7 +133,7 @@ def get_llm():
         api_key=config.get_api_key(),
         http_client=_http_client(),
         temperature=config.LLM_TEMPERATURE,
-        timeout=config.LLM_TIMEOUT_SECONDS,
+        timeout=config.PRIMARY_TIMEOUT_SECONDS,
         max_retries=0,  # we handle retries explicitly so they show up in the audit log
     )
 
@@ -132,9 +152,9 @@ def get_fallback_llm():
         base_url=config.FALLBACK_BASE_URL,
         model=config.FALLBACK_CHAT_MODEL,
         api_key=config.get_fallback_api_key(),
-        http_client=_http_client(),
+        http_client=_fallback_http_client(),
         temperature=config.LLM_TEMPERATURE,
-        timeout=config.LLM_TIMEOUT_SECONDS,
+        timeout=config.FALLBACK_TIMEOUT_SECONDS,
         max_retries=0,
     )
 
@@ -381,17 +401,29 @@ def chat(
 def _after_primary_failed(system: str, user: str, agent: str,
                           temperature: float | None, key: str, started: float,
                           exc: Exception) -> tuple[str, LLMTelemetry]:
-    """Three lines of defence, in this order:
+    """The stages after the primary has failed or been skipped:
 
-        1. the recorded cache   -- instant, deterministic, no network
-        2. a secondary provider -- live, handles anything, needs network
-        3. give up
+        2. the recorded cache   -- instant (~40ms), deterministic, no network at all
+        3. a secondary provider -- live, handles anything, needs network
+        4. raise LLMUnavailable -- every caller treats this as "answer from the database"
 
-    Cache before fallback is deliberate. A scripted demo beat replays in ~40ms and gives
-    exactly the answer that was rehearsed; routing it to a different model would be slower
-    and might phrase the climax differently on stage. The secondary provider is for what
-    the cache cannot cover -- an improvised question from a judge -- which is precisely the
-    case where a fresh answer beats a stale one.
+    Stage 4 is not a crash. `customer_agent` falls through to a read-only tool scoped to
+    the caller and says plainly that it is answering from records; `pipeline` keeps the
+    deterministic rule score and notes that the model was unreachable. So the chain always
+    terminates in an answer, never in an error page.
+
+    Cache before fallback is deliberate, and worth keeping even though "primary then
+    secondary then offline" is the more natural way to say it. A scripted demo beat
+    replays in ~40ms with exactly the wording that was rehearsed; routing it to a
+    different model instead would be slower AND might phrase the climax differently in
+    front of judges. The secondary provider is for what the cache cannot cover -- an
+    improvised question -- which is precisely the case where a fresh answer beats a stale
+    one. So the ordering is not primary/secondary/offline by accident; it is
+    "instant and rehearsed" before "live and improvised".
+
+    Bounded by config.PRIMARY_TIMEOUT_SECONDS: the primary gets a short budget so a dead
+    endpoint cannot hold a beat open, and the circuit breaker means that budget is paid at
+    most twice before the primary is skipped outright for a minute.
     """
     cached = _load_cache().get(key)
     latency_ms = int((time.perf_counter() - started) * 1000)
@@ -497,6 +529,10 @@ def health_check() -> dict[str, Any]:
                               else None),
         "fallback_model": (config.FALLBACK_CHAT_MODEL if config.has_fallback() else None),
         "fallback_calls": fallback_calls(),
+        # How much dead air a failing primary can cost, so it is answerable on stage
+        # rather than guessed at.
+        "primary_timeout_s": config.PRIMARY_TIMEOUT_SECONDS,
+        "fallback_timeout_s": config.FALLBACK_TIMEOUT_SECONDS,
     }
     if config.DEMO_MODE == "cached":
         result["llm_ok"] = cache_size() > 0

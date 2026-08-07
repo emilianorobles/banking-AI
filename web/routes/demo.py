@@ -179,6 +179,11 @@ def preflight():
     # Keyed on who actually answered, not on `llm_ok` -- which is true when the fallback
     # served the call, and would have reported "primary responding" while it was down.
     served = health.get("chat_served_by")
+    changes.append(
+        f"failover budget: primary gets {health.get('primary_timeout_s')}s, then "
+        f"cache, then {health.get('fallback_provider') or 'no secondary'} "
+        f"({health.get('fallback_timeout_s')}s), then the database"
+    )
     if served == "primary":
         changes.append("primary provider responding")
     elif served == "nothing — all providers failed":

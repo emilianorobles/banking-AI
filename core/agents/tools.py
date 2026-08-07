@@ -95,12 +95,19 @@ def list_recent_transactions(customer_id: str, limit: int = 10) -> list[dict[str
         out.append({
             "txn_id": txn.txn_id,
             "when": txn.timestamp[:16].replace("T", " "),
-            "amount": money.fmt(txn.amount, txn.currency),
-            # The display string above now carries a currency symbol, so anything that
-            # wants the number has to be given the number. Parsing it back out would be a
-            # parser written against a format that just changed -- and would break again
-            # the next time it does. `merchant` is deliberately still absent: it is
-            # attacker-controlled text and no tool puts it in front of the model.
+            # ASCII on purpose -- this string is PROMPT TEXT. `_fmt_result` serialises the
+            # result with json.dumps at its default ensure_ascii=True, so a rupee sign
+            # arrives at the model as the literal escape "₹" and the model, quite
+            # reasonably, writes the amount without a symbol. Forcing ensure_ascii=False
+            # would fix the escaping but push non-ASCII through the TCS proxy on every
+            # call, which is the encoding risk we deliberately keep out of prompt text.
+            # The symbol belongs on the customer-facing paths, which get it from
+            # amount_value + currency below.
+            "amount": f"{txn.amount:,.2f} {txn.currency}",
+            # The number itself, so nothing downstream has to parse the string above --
+            # a parser written against a display format breaks the week the format
+            # changes. `merchant` is deliberately absent: attacker-controlled text that
+            # no tool puts in front of the model.
             "amount_value": round(txn.amount, 2),
             "currency": txn.currency,
             "merchant_category": txn.merchant_category,

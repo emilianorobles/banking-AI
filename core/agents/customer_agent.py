@@ -23,7 +23,7 @@ import time
 from datetime import date
 from typing import Any
 
-from .. import db, llm, security
+from .. import db, llm, money, security
 from ..contracts import AgentReply, ToolCall
 from . import router, tools
 
@@ -513,8 +513,17 @@ def _readable_fallback(call: ToolCall) -> str:
 
         first = result[0]
         if "amount" in first and "when" in first:
+            # The customer sees the symbol here even though the model never does: the
+            # tool's `amount` string is kept ASCII because it is prompt text, so this
+            # path formats from amount_value + currency instead. This is the offline
+            # branch -- when it runs, it is the only thing the customer will read.
+            def _amount(r: dict[str, Any]) -> str:
+                if r.get("amount_value") is not None:
+                    return money.fmt(r["amount_value"], r.get("currency", ""))
+                return str(r.get("amount", ""))
+
             rows = "\n".join(
-                f"- {r['when']} · {r['amount']} · {r.get('merchant_category', '')} · "
+                f"- {r['when']} · {_amount(r)} · {r.get('merchant_category', '')} · "
                 f"{r.get('location', '')}" for r in result[:10]
             )
             return f"Here are your most recent transactions:\n{rows}"

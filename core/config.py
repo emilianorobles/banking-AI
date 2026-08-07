@@ -54,6 +54,19 @@ LLM_TIMEOUT_SECONDS = int(os.getenv("LLM_TIMEOUT", "20"))
 LLM_TEMPERATURE = 0.0          # fraud decisions must be reproducible
 LLM_MAX_RETRIES = 1            # one JSON-repair retry; see agents/fraud_analyst.py
 
+# How long we wait for the PRIMARY before handing the call to the next stage. Separate
+# from LLM_TIMEOUT_SECONDS on purpose: this is the number that decides how much dead air
+# a failing endpoint can cost on stage, and it should be short. The fallback gets the
+# longer budget, because by the time it runs it is the only thing that can still answer.
+#
+# 12s rather than the 30s that first comes to mind. A beat that takes 30 seconds has
+# already lost the room, and the circuit breaker means you pay this at most TWICE before
+# the primary is skipped entirely for a minute -- so the worst case is ~24s of degradation
+# across a whole demo, not per call. Raise it if the primary is merely slow rather than
+# dead; lower it if you would rather never wait at all.
+PRIMARY_TIMEOUT_SECONDS = int(os.getenv("PRIMARY_TIMEOUT", "12"))
+FALLBACK_TIMEOUT_SECONDS = int(os.getenv("FALLBACK_TIMEOUT", str(LLM_TIMEOUT_SECONDS)))
+
 # Published gpt-4.1 rates (USD per 1M tokens). Used for the live cost meter --
 # an estimate, and labelled as such in the UI.
 COST_PER_1M_PROMPT = 2.00

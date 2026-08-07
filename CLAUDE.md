@@ -181,9 +181,19 @@ blocked on an API key.** The whole app runs today with `DEMO_MODE=off` (rules on
 - [x] **Light/dark theme + UI fixes** (branch `ui/theme-toggle-and-polish`) — header toggle,
       two first-class themes, gauge arc bug fixed, dropdowns readable.
       QA page at `web/static/_harness.html` (see "The theme system" below)
+- [x] **Explainability**: `RULE_META` single-declaration-site, plain-English `txn` drill with
+      the three-state checklist, `sections`/`charts` drill envelope, **Why?** on every row
+- [x] Currency symbols throughout — `core/money.py`, injected as `window.SB_CURRENCY`
+- [x] `web/mdlite.py` — the agent's markdown tables actually render; `VISUALS` chat charts
+- [x] Voice I/O (`web/static/js/voice.js`) — dictation in, spoken replies out, and **no**
+      spoken path past the approval gate
+- [x] Pitch material — `docs/VALUE_PROPOSITION.md`, `/ops/business-case`, talk track
+- [x] Bounded failover: `PRIMARY_TIMEOUT` (12s) separate from the fallback's budget
 - [ ] **← NEXT: slide deck** (docs/ARCHITECTURE.md headings map to slides)
 - [ ] Demo rehearsed 3× under 10:00, screen recording captured
 - [ ] Re-run `python -m core.record_demo` after any prompt/scenario change
+- [ ] **Re-record against the TCS primary once it recovers** — the current cache was
+      recorded while it was 503ing, so every chat beat is in the fallback's voice
 
 ---
 
@@ -232,6 +242,19 @@ instantly, not be re-improvised by a different model live on stage.
 **Enable the secondary provider** by setting `FALLBACK_API_KEY` in
 `.streamlit/secrets.toml` (gitignored) — see `secrets.toml.example`. Unset, stages 1, 2
 and 4 still work exactly as before.
+
+### The primary gets a short budget, the fallback a long one
+
+`PRIMARY_TIMEOUT` (default **12s**) is separate from `LLM_TIMEOUT` and from
+`FALLBACK_TIMEOUT`, and they use **separate httpx clients** — they shared one before, which
+meant the two stages could never have different budgets. That is backwards for a failover:
+the first stage should give up quickly, and the second should be allowed to take its time,
+because by then it is the only thing that can still answer.
+
+12s rather than the 30s that first comes to mind, because a beat that takes 30 seconds has
+already lost the room — and the breaker means you pay it **at most twice**. Measured against
+a black-holed primary: **12.6s → 6.5s → 0.45s**, the third call skipping the primary
+entirely. Pre-flight prints the whole budget so it is answerable on stage rather than guessed.
 
 ### The circuit breaker is what makes it usable
 
@@ -437,7 +460,21 @@ Assertion 5 in the harness reports all of these, so brightening a stop back fail
       scoped to the caller — and answers from the database, saying plainly that it is
       doing so. "What is my balance?" returns the real balance with the endpoint dead.
 
-13. **Run evaluation crashed with `Transaction.__init__() got an unexpected keyword
+13. **A currency symbol in a tool result never reached the model.** `list_recent_transactions`
+    was changed to return `"₹145.17 INR"` so the chat table would carry symbols. It did not
+    work, and the reason is worth remembering: `customer_agent._fmt_result` serialises the
+    result with `json.dumps` at its default `ensure_ascii=True`, so the model received the
+    literal escape `₹` and — quite reasonably — wrote the amount with no symbol at all.
+    `ensure_ascii=False` would have fixed the escaping while pushing non-ASCII through the
+    TCS proxy on every call, which is exactly the risk we keep out of prompt text.
+
+    The fix is the split that should have been there from the start: **`amount` stays ASCII
+    because it is prompt text**, and the customer-facing paths format from `amount_value` +
+    `currency` instead. `_readable_fallback` now does that, so offline prose reads
+    `₹145.17 INR` while the model only ever sees `145.17 INR`. **A field read by a model and
+    a field read by a person are not the same field, even when they hold the same number.**
+
+14. **Run evaluation crashed with `Transaction.__init__() got an unexpected keyword
     argument 'label'`.** `evaluation.compare()` takes the raw eval-set *rows* and scores
     them itself; the route handed it the *results* of `run_case`, whose dicts carry a
     `label` key. Passing rows would have fixed the crash but scored every case a third
