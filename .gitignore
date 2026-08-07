@@ -12,6 +12,11 @@ test_key.py
 *.db-wal
 *.db-shm
 
+# Rendered notification emails. One per action taken, so they churn on every rehearsal,
+# and `seed.seed(reset=True)` wipes the directory anyway. Unlike the caches below there
+# is nothing to gain by committing them — they are output, not fallback.
+data/outbox/
+
 # NOT ignored, deliberately:
 #   data/faiss/                  the built index
 #   data/cached_responses.json   recorded model responses

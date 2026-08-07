@@ -186,7 +186,7 @@ Let the status steps show. Narrate them as they appear:
 > asymmetric — it can argue a customer *down* more easily than up, because the rules are
 > already good at finding risk and bad at recognising innocence."
 
-### 9:30–10:00 · Close
+### 9:30–10:00 · Close  
 > "Fewer wrongly declined customers, faster fraud response, and a system that gets better
 > every time an analyst does their job. Happy to take questions."
 

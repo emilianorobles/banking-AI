@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from functools import lru_cache
 from typing import Any
@@ -21,6 +22,67 @@ from .contracts import LLMTelemetry, new_id, now_iso
 # Populated by core.db at import time if available; kept as a hook so this module
 # stays import-safe and dependency-free in tests.
 _telemetry_sink: Any = None
+
+# How many calls the secondary provider has served this process. Surfaced in
+# health_check() so "are we still on the primary?" is answerable at a glance on stage.
+_fallback_calls: int = 0
+
+
+def fallback_calls() -> int:
+    return _fallback_calls
+
+
+# --------------------------------------------------------------------------- #
+# Primary circuit breaker
+#
+# A dead endpoint costs a full timeout on EVERY call, and the fallback behind it is
+# worthless if reaching it takes 20 seconds. Measured on a dead primary: 17-26s per
+# pipeline beat, every answer correct, demo ruined. Two consecutive failures now open
+# the circuit for a minute; calls skip the primary entirely until it closes, and one
+# probe reopens it so a recovered endpoint is picked up without a restart.
+# --------------------------------------------------------------------------- #
+PRIMARY_FAILURE_THRESHOLD = 2
+PRIMARY_COOLDOWN_SECONDS = float(os.getenv("PRIMARY_COOLDOWN", "60"))
+
+_primary_failures: int = 0
+_primary_open_until: float = 0.0
+
+
+def _primary_available() -> bool:
+    return time.monotonic() >= _primary_open_until
+
+
+def _circuit_remaining() -> float:
+    return max(0.0, _primary_open_until - time.monotonic())
+
+
+def _note_primary_failure() -> None:
+    global _primary_failures, _primary_open_until
+    _primary_failures += 1
+    if _primary_failures >= PRIMARY_FAILURE_THRESHOLD:
+        _primary_open_until = time.monotonic() + PRIMARY_COOLDOWN_SECONDS
+
+
+def _note_primary_success() -> None:
+    """Any success closes the circuit. A recovered endpoint should be trusted again
+    immediately -- we are protecting against dead air, not rationing requests."""
+    global _primary_failures, _primary_open_until
+    _primary_failures = 0
+    _primary_open_until = 0.0
+
+
+def reset_circuit() -> None:
+    """Force the primary back into play. Wired to the pre-flight check, so a presenter
+    who sees the endpoint recover does not have to restart the app."""
+    _note_primary_success()
+
+
+def circuit_state() -> dict[str, Any]:
+    return {
+        "primary_open": not _primary_available(),
+        "consecutive_failures": _primary_failures,
+        "reopens_in_seconds": round(_circuit_remaining()),
+    }
 
 
 def set_telemetry_sink(fn) -> None:
@@ -53,6 +115,27 @@ def get_llm():
         temperature=config.LLM_TEMPERATURE,
         timeout=config.LLM_TIMEOUT_SECONDS,
         max_retries=0,  # we handle retries explicitly so they show up in the audit log
+    )
+
+
+@lru_cache(maxsize=1)
+def get_fallback_llm():
+    """Secondary chat model, used only when the primary fails.
+
+    Same OpenAI-compatible interface, so nothing above this line changes. `verify=False`
+    for the same reason as the primary: this machine sits behind a TLS-intercepting
+    corporate proxy, and without it every outbound HTTPS call raises
+    CERTIFICATE_VERIFY_FAILED regardless of provider.
+    """
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI(
+        base_url=config.FALLBACK_BASE_URL,
+        model=config.FALLBACK_CHAT_MODEL,
+        api_key=config.get_fallback_api_key(),
+        http_client=_http_client(),
+        temperature=config.LLM_TEMPERATURE,
+        timeout=config.LLM_TIMEOUT_SECONDS,
+        max_retries=0,
     )
 
 
@@ -157,13 +240,27 @@ def embed_query(text: str) -> list[float]:
             raise LLMUnavailable("DEMO_MODE=off: embeddings disabled")
         # cached mode with a miss: fall through and try live, then fail cleanly
 
+    # Embeddings share the primary's circuit breaker: same host, same outage. This is
+    # what actually dominates a dead-endpoint demo -- `rag.search_balanced` embeds twice
+    # per transaction, so a 20s timeout each turned every beat into a 15-25s wait even
+    # after the chat path had been protected. There is no secondary here on purpose:
+    # Groq serves no embedding model, so retrieval survives on the disk cache alone.
+    if not _primary_available():
+        if cached is not None:
+            return cached
+        raise LLMUnavailable(
+            f"primary circuit open ({_circuit_remaining():.0f}s) and query not cached"
+        )
+
     try:
         vector = get_embeddings().embed_query(text)
+        _note_primary_success()
         if config.RECORD_RESPONSES:
             _save_embedding(key, list(vector))
             _load_embed_cache.cache_clear()
         return list(vector)
     except Exception as exc:
+        _note_primary_failure()
         if cached is not None:
             return cached
         raise LLMUnavailable(f"embedding failed and not cached: {exc}") from exc
@@ -248,6 +345,16 @@ def chat(
         return cached, tel
 
     # --- live ---
+    # Circuit breaker. Once the primary has failed twice in a row we stop calling it for
+    # a minute and go straight to cache or fallback. Without this every call still pays
+    # the full 20s timeout before recovering: the selftest measured 17-26s per beat with
+    # the primary dead, which is a destroyed demo even though every answer was correct.
+    if not _primary_available():
+        return _after_primary_failed(
+            system, user, agent, temperature, key, started,
+            RuntimeError(f"primary circuit open, {_circuit_remaining():.0f}s remaining"),
+        )
+
     try:
         from langchain_core.messages import HumanMessage, SystemMessage
         llm = get_llm()
@@ -262,19 +369,83 @@ def chat(
             _save_to_cache(key, text)
             _load_cache.cache_clear()
 
+        _note_primary_success()
         tel = _record(agent, pt, ct, latency_ms)
         return text, tel
 
     except Exception as exc:
-        # Last line of defence: if we recorded this exact prompt before, replay it.
-        cached = _load_cache().get(key)
-        latency_ms = int((time.perf_counter() - started) * 1000)
-        if cached is not None:
-            _record(agent, 0, 0, latency_ms, cached=True,
-                    error=f"live call failed, replayed from cache: {exc}")
-            return cached, _record(agent, 0, 0, latency_ms, cached=True)
-        _record(agent, 0, 0, latency_ms, error=str(exc))
-        raise LLMUnavailable(f"{agent}: {exc}") from exc
+        _note_primary_failure()
+        return _after_primary_failed(system, user, agent, temperature, key, started, exc)
+
+
+def _after_primary_failed(system: str, user: str, agent: str,
+                          temperature: float | None, key: str, started: float,
+                          exc: Exception) -> tuple[str, LLMTelemetry]:
+    """Three lines of defence, in this order:
+
+        1. the recorded cache   -- instant, deterministic, no network
+        2. a secondary provider -- live, handles anything, needs network
+        3. give up
+
+    Cache before fallback is deliberate. A scripted demo beat replays in ~40ms and gives
+    exactly the answer that was rehearsed; routing it to a different model would be slower
+    and might phrase the climax differently on stage. The secondary provider is for what
+    the cache cannot cover -- an improvised question from a judge -- which is precisely the
+    case where a fresh answer beats a stale one.
+    """
+    cached = _load_cache().get(key)
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    if cached is not None:
+        return cached, _record(agent, 0, 0, latency_ms, cached=True,
+                               error=f"primary unavailable, replayed from cache: {exc}")
+
+    if config.has_fallback():
+        try:
+            return _chat_fallback(system, user, agent, temperature, key, started)
+        except Exception as fb_exc:
+            _record(agent, 0, 0, int((time.perf_counter() - started) * 1000),
+                    error=f"primary: {exc} | fallback: {fb_exc}")
+            raise LLMUnavailable(
+                f"{agent}: primary and fallback both failed "
+                f"({config.FALLBACK_PROVIDER_NAME}: {fb_exc})"
+            ) from fb_exc
+
+    _record(agent, 0, 0, latency_ms, error=str(exc))
+    raise LLMUnavailable(f"{agent}: {exc}") from exc
+
+
+def _chat_fallback(system: str, user: str, agent: str, temperature: float | None,
+                   key: str, started: float) -> tuple[str, LLMTelemetry]:
+    """Run the same exchange against the secondary provider.
+
+    A success is still recorded to the cache under the primary's key, so the next outage
+    replays it without needing either provider. The fallback earns its keep once and the
+    answer is ours from then on.
+    """
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    llm = get_fallback_llm()
+    if temperature is not None:
+        llm = llm.bind(temperature=temperature)
+    response = llm.invoke([SystemMessage(content=system), HumanMessage(content=user)])
+    text = str(response.content)
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    pt, ct = _extract_usage(response, system, user)
+
+    if config.RECORD_RESPONSES:
+        _save_to_cache(key, text)
+        _load_cache.cache_clear()
+
+    # Counted here rather than written to the audit log directly: `core/db.py` imports
+    # this module to install the telemetry sink, so importing db from here would be a
+    # cycle. The telemetry row carries the provider in its `error` field and is persisted
+    # through that sink, so the audit trail is complete either way.
+    global _fallback_calls
+    _fallback_calls += 1
+
+    tel = _record(agent, pt, ct, latency_ms,
+                  error=f"served by fallback provider ({config.FALLBACK_PROVIDER_NAME})")
+    return text, tel
 
 
 def _record(
@@ -321,22 +492,50 @@ def health_check() -> dict[str, Any]:
         "llm_ok": False,
         "embeddings_ok": False,
         "error": None,
+        "fallback_configured": config.has_fallback(),
+        "fallback_provider": (config.FALLBACK_PROVIDER_NAME if config.has_fallback()
+                              else None),
+        "fallback_model": (config.FALLBACK_CHAT_MODEL if config.has_fallback() else None),
+        "fallback_calls": fallback_calls(),
     }
     if config.DEMO_MODE == "cached":
         result["llm_ok"] = cache_size() > 0
         result["embeddings_ok"] = config.FAISS_DIR.exists()
         return result
     try:
-        text, _ = chat("You are a health check.", "Reply with exactly: OK", agent="health")
-        result["llm_ok"] = bool(text)
+        # A unique nonce so the probe can never be answered from the cache. Without it
+        # the recorded "Reply with exactly: OK" replays and health_check reports the
+        # primary as healthy while it is refusing every call -- which is the one thing
+        # a health check must never do.
+        text, tel = chat("You are a health check.",
+                         f"Reply with exactly: OK  [{new_id('HC')}]", agent="health")
+        result["llm_ok"] = bool(text) and not tel.cached
+        result["chat_served_by"] = (
+            "cache" if tel.cached
+            else config.FALLBACK_PROVIDER_NAME if (tel.error or "").startswith("served by")
+            else "primary"
+        )
     except Exception as exc:
         result["error"] = str(exc)[:300]
+        result["chat_served_by"] = "nothing — all providers failed"
     try:
         get_embeddings().embed_query("health check")
         result["embeddings_ok"] = True
+        _note_primary_success()
     except Exception as exc:
+        # Counts toward the breaker on purpose. Together with the chat probe above, a
+        # health check against a dead primary trips the circuit -- so running pre-flight
+        # before the demo means the FIRST scripted beat is already fast, instead of
+        # paying a 23s timeout to discover what pre-flight just found out.
+        _note_primary_failure()
         if result["error"] is None:
             result["error"] = str(exc)[:300]
+
+    # Re-read after the probes: both are mutated by the calls above, and the values
+    # captured when the dict was built are already stale by one call.
+    result["circuit"] = circuit_state()
+    result["fallback_calls"] = fallback_calls()
+    result["primary_ok"] = result.get("chat_served_by") == "primary"
     return result
 
 

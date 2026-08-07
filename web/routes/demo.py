@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from flask import (Blueprint, flash, jsonify, redirect, render_template,
                    session, url_for)
 
-from core import config, db, pipeline, rag, seed, travel
+from core import config, db, llm, pipeline, rag, seed, travel
 from core.contracts import Transaction, new_id
 
 from .. import auth
@@ -170,6 +170,28 @@ def preflight():
                                      tn["end_date"], created_via="form")
                 changes.append(f"filed the {', '.join(tn['countries'])} travel notice")
 
+    # Give the primary a clean slate, then probe it. If it is up, the circuit closes and
+    # we run normally. If it is down, the probe trips the breaker here rather than during
+    # the first beat on stage -- pre-flight absorbs the timeout so the demo does not.
+    llm.reset_circuit()
+    health = llm.health_check()
+
+    # Keyed on who actually answered, not on `llm_ok` -- which is true when the fallback
+    # served the call, and would have reported "primary responding" while it was down.
+    served = health.get("chat_served_by")
+    if served == "primary":
+        changes.append("primary provider responding")
+    elif served == "nothing — all providers failed":
+        changes.append("NO provider is reachable — the demo will run on the recorded "
+                       "cache and the rules engine")
+    else:
+        changes.append(f"primary provider is DOWN — chat is being served by {served}")
+
+    if not health.get("embeddings_ok"):
+        changes.append("embeddings are unreachable — retrieval is running from the "
+                       "cached query vectors, so citations work for the scripted beats "
+                       "but not for improvised ones")
+
     return jsonify({
         "ok": True,
         "changes": changes or ["nothing to fix — already in a good state"],
@@ -177,4 +199,9 @@ def preflight():
         "pending_alerts": len(db.list_alerts(status="PENDING", limit=500)),
         "mode": config.DEMO_MODE,
         "has_key": config.has_api_key(),
+        "primary_ok": health.get("primary_ok"),
+        "chat_served_by": served,
+        "embeddings_ok": health.get("embeddings_ok"),
+        "fallback": health.get("fallback_provider"),
+        "circuit": health.get("circuit"),
     })

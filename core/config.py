@@ -60,6 +60,41 @@ COST_PER_1M_PROMPT = 2.00
 COST_PER_1M_COMPLETION = 8.00
 
 
+# --------------------------------------------------------------------------- #
+# Secondary provider (optional)
+#
+# The TCS endpoint is the primary and stays the primary -- it is the sanctioned one.
+# But it is a shared internal service, and it has returned 503 "the authentication
+# database is temporarily unreachable" during working hours. When it does, chat falls
+# back to a second OpenAI-compatible provider before it gives up.
+#
+# Chat only. There is deliberately no embedding fallback: Groq serves no embedding
+# model, so retrieval still depends on the primary or on `cached_embeddings.json`.
+# See `core/llm.py :: embed_query`.
+#
+# Off unless FALLBACK_API_KEY is set. Never hardcode it -- same rule as the primary.
+# --------------------------------------------------------------------------- #
+FALLBACK_BASE_URL = os.getenv("FALLBACK_BASE_URL", "https://api.groq.com/openai/v1")
+FALLBACK_CHAT_MODEL = os.getenv("FALLBACK_CHAT_MODEL", "openai/gpt-oss-120b")
+FALLBACK_PROVIDER_NAME = os.getenv("FALLBACK_PROVIDER_NAME", "Groq")
+
+
+def get_fallback_api_key() -> str:
+    """Resolve the secondary provider's key. Empty string means 'no fallback'."""
+    key = os.getenv("FALLBACK_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        import streamlit as st  # noqa: PLC0415 -- optional, absent under Flask/CLI
+        return str(st.secrets.get("FALLBACK_API_KEY", "")).strip()
+    except Exception:
+        return ""
+
+
+def has_fallback() -> bool:
+    return bool(get_fallback_api_key())
+
+
 def get_api_key() -> str:
     """Resolve the API key: env var first, then Streamlit secrets.
 

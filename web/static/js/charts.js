@@ -181,9 +181,17 @@
         rect.setAttribute("height", Math.max(1, bh));
       });
       if (data.length <= 14) {
+        /* Fit the label to the bar rather than to a fixed 7 characters. The old rule
+           also kept the LAST 5 chars, so "Legitimate" rendered as "imate" and "AMERICAS"
+           as "ricas" -- on two bars with 260px each to play with. Keep the head, and only
+           elide when the width genuinely cannot take it. */
+        const maxChars = Math.max(4, Math.floor(bw / 6.2));
+        const label = d.label.length > maxChars
+          ? d.label.slice(0, maxChars - 1) + "…"
+          : d.label;
         s.appendChild(el("text", {
           x: x + bwidth / 2, y: h - 8, "text-anchor": "middle",
-        }, d.label.length > 7 ? d.label.slice(-5) : d.label));
+        }, label));
       }
     });
   }
@@ -356,11 +364,18 @@
     const s = svg(host, w, h);
     const pct = Math.max(0, Math.min(1, value / (opts.max || 100)));
 
+    /* `from` and `to` are fractions of the gauge, and the gauge is a half circle -- so a
+       span of 1.0 is 180 degrees and the sweep can never exceed that. The SVG large-arc
+       flag is therefore always 0. It used to be `(to - from) > .5`, which confuses "more
+       than half the gauge" with "more than half a circle": any value above 50 asked SVG
+       to take the long way round and the arc was drawn as its 230-degree complement,
+       wrapping under the bottom of the dial. The grey track hid the bug because
+       arcPath(0, 1) is exactly 180 degrees, where both flag values draw the same path. */
     const arcPath = (from, to) => {
       const a1 = Math.PI + from * Math.PI, a2 = Math.PI + to * Math.PI;
       const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
       const x2 = cx + r * Math.cos(a2), y2 = cy + r * Math.sin(a2);
-      return `M ${x1} ${y1} A ${r} ${r} 0 ${(to - from) > .5 ? 1 : 0} 1 ${x2} ${y2}`;
+      return `M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`;
     };
 
     s.appendChild(el("path", {

@@ -133,6 +133,28 @@
       statCard("p95 latency", `${Math.round(m.p95_latency_ms)} ms`,
                `$${m.total_cost_usd.toFixed(4)} to run`);
 
+    /* Separation is a property of the run itself, so it draws either way. */
+    SBCharts.bars($("sep-chart"), [
+      { label: "Legitimate", value: m.avg_score_legit, colour: "var(--ok)" },
+      { label: "Fraud", value: m.avg_score_fraud, colour: "var(--danger)" },
+    ], { height: 200 });
+
+    $("sep-note").textContent =
+      `Mean risk ${m.avg_score_legit.toFixed(1)} on legitimate customers versus ` +
+      `${m.avg_score_fraud.toFixed(1)} on fraud — a separation of ${m.separation.toFixed(1)} points. ` +
+      `A wide gap is what lets the cheap path decide most transactions on its own.`;
+
+    if (!c) {
+      /* Rules-only run: both arms would be identical, so there is nothing to compare
+         and we say so rather than showing an empty table. */
+      $("ab-table").querySelector("tbody").innerHTML =
+        '<tr><td colspan="4" class="dim center">Not applicable — this run had the AI ' +
+        'analyst switched off, so both arms would be the same.</td></tr>';
+      $("ab-verdict").innerHTML =
+        "Re-run with <strong>Include the AI analyst</strong> ticked to measure what the " +
+        "agent adds over a pure rules engine.";
+    }
+
     if (c) {
       const rows = [
         ["Recall", c.baseline.recall, c.full.recall, true],
@@ -161,16 +183,6 @@
         `with ${c.delta.fraud_missed_added} extra fraud missed. ` +
         `The rules are already strong — the agent's value is the explanation, the cited ` +
         `precedent, and the learning loop, not raw detection.`;
-
-      SBCharts.bars($("sep-chart"), [
-        { label: "Legitimate", value: m.avg_score_legit, colour: "var(--ok)" },
-        { label: "Fraud", value: m.avg_score_fraud, colour: "var(--danger)" },
-      ], { height: 200 });
-
-      $("sep-note").textContent =
-        `Mean risk ${m.avg_score_legit.toFixed(1)} on legitimate customers versus ` +
-        `${m.avg_score_fraud.toFixed(1)} on fraud — a separation of ${m.separation.toFixed(1)} points. ` +
-        `A wide gap is what lets the cheap path decide most transactions on its own.`;
     }
 
     const results = data.results || [];

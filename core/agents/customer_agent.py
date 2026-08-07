@@ -101,7 +101,7 @@ def _parse(text: str) -> dict[str, Any]:
         return {"action": "answer", "say": text.strip()}
 
 
-def _chat_cache_key(intent: str, message: str, step: int) -> str:
+def _chat_cache_key(message: str, step: int) -> str:
     """A stable key for the offline replay cache.
 
     The default key hashes the whole prompt, which for this agent is fatal to the offline
@@ -110,11 +110,19 @@ def _chat_cache_key(intent: str, message: str, step: int) -> str:
     question keyed differently depending on what was asked before it. Both mean the
     recorded chat beats silently fail to replay on the one occasion they exist for.
 
-    Keying on intent + the normalised question + which step of the tool loop we are on
-    gives the same question the same key on any day, in any conversation.
+    The key is therefore the normalised question plus which step of the tool loop we are
+    on -- and deliberately NOTHING ELSE.
+
+    In particular it must not include the routed intent, which an earlier version did.
+    `router.classify` falls back to the model when no pattern matches, so the intent for
+    "Why was my card frozen?" was `card_control` while the API was up and `general` once
+    it went down. That put the recorded response behind a key the lookup could no longer
+    compute: the cache missed precisely when the provider was unreachable, which is the
+    only situation it exists for. **Never derive a fallback's cache key from anything that
+    depends on the thing being fallen back from.**
     """
     normalised = " ".join((message or "").lower().split())
-    digest = hashlib.sha256(f"{intent}\x00{normalised}\x00{step}".encode()).hexdigest()
+    digest = hashlib.sha256(f"{normalised}\x00{step}".encode()).hexdigest()
     return "chat-" + digest[:20]
 
 
@@ -245,8 +253,35 @@ def respond(
     for step in range(MAX_STEPS):
         try:
             text, _tel = llm.chat(system, user_prompt, agent="customer_agent",
-                                  cache_key=_chat_cache_key(intent, message, step))
+                                  cache_key=_chat_cache_key(message, step))
         except llm.LLMUnavailable as exc:
+            # The provider is down and this exact question was never recorded. Rather than
+            # a dead end, run the read-only tool this intent is about and answer from the
+            # database -- which is where the answer lives anyway. `primary_tool` is
+            # read-only and scoped to the caller for exactly this purpose, so running one
+            # unprompted is always safe.
+            #
+            # It degrades honestly: the customer gets their real balance or their real
+            # transactions, and is told the assistant is limited rather than being shown a
+            # confident wrong answer. Only worth doing on the first step; mid-loop we
+            # already have a tool result to fall back on.
+            fallback = router.primary_tool(intent)
+            if not executed and fallback in allowed:
+                call = tools.execute(fallback, customer_id, {})
+                if call.error is None:
+                    executed.append(call)
+                    say = _readable_fallback(call)
+                    dlp = security.scan_outbound(say)
+                    return AgentReply(
+                        text=(dlp.safe_text + "\n\n_(The assistant service is unreachable, "
+                              "so this is straight from your account records. Everything "
+                              "in the dashboard is live and unaffected.)_"),
+                        intent=intent, tool_calls=executed,
+                        guardrail_notes=[f"llm_unavailable:{str(exc)[:120]}",
+                                         f"answered_from_records:{fallback}"],
+                        latency_ms=int((time.perf_counter() - started) * 1000),
+                    )
+
             return AgentReply(
                 text=("I can't reach the assistant service right now. Your account and "
                       "transactions are still available in the dashboard below."),
@@ -364,21 +399,145 @@ def _finalise(call: ToolCall, customer_id: str) -> str:
 
 
 def _readable_fallback(call: ToolCall) -> str:
+    """Turn a tool result into prose without the model.
+
+    Reached whenever the phrasing call fails -- which, when the provider is down, is every
+    single turn. It has to cover **every** tool, because the last resort is dumping raw
+    JSON at a customer, and a chat bubble full of `{"security_score": 86, ...}` is worse
+    than any wording problem it might have avoided.
+
+    Deliberately formats the *real* result rather than replaying recorded prose. Stale
+    figures presented as current are a worse failure in a banking app than plain phrasing,
+    so this stays accurate even when nothing else can reach the network.
+    """
     result = call.result
+    name = call.tool_name
+
+    if isinstance(result, dict) and result.get("error"):
+        return str(result["error"])
+
+    # ---- confirmations -----------------------------------------------------
     if isinstance(result, dict) and result.get("confirmed"):
-        if call.tool_name == "set_travel_notice":
+        if name == "set_travel_notice":
             return (f"Travel notice saved for {', '.join(result.get('countries', []))} "
                     f"from {result.get('from')} to {result.get('to')}. "
                     "Your card won't be flagged for being abroad during those dates.")
-        if call.tool_name == "freeze_card":
-            return f"Your card ending {result.get('card_last4')} is now frozen."
-        if call.tool_name == "raise_dispute":
+        if name == "freeze_card":
+            return (f"Your card ending {result.get('card_last4')} is now frozen. "
+                    "Nothing further will authorise on it.")
+        if name == "unfreeze_card":
+            return (f"Your card ending {result.get('card_last4')} is active again, and "
+                    "every transaction is being screened as normal.")
+        if name == "report_card_lost":
+            return (f"Card ending {result.get('card_last4')} is frozen and a replacement "
+                    f"is on its way — usually {result.get('delivery_days', '5-7')} days. "
+                    "Anything that lands on the old card from now on is declined.")
+        if name == "raise_dispute":
             return (f"Dispute opened on {result.get('txn_id')} for "
                     f"{result.get('amount')}. Provisional credit applies while we investigate.")
-    if isinstance(result, list) and result and "amount" in result[0]:
-        rows = "\n".join(
-            f"- {r['when']} · {r['amount']} · {r['merchant_category']} · {r['location']}"
-            for r in result[:10]
-        )
-        return f"Here are your most recent transactions:\n{rows}"
+        if name == "set_spending_alert":
+            over = ("  You're already projected to pass it this month."
+                    if result.get("already_over") else "")
+            return (f"Done — I'll tell you if you go over "
+                    f"{result.get('threshold'):,.0f} in a {result.get('period')}.{over}")
+
+    # ---- dict results ------------------------------------------------------
+    if isinstance(result, dict):
+        if name == "get_account_summary":
+            notices = result.get("active_travel_notices") or []
+            return (
+                f"Your balance is {result.get('balance', 0):,.2f} "
+                f"{result.get('currency', '')}, with "
+                f"{result.get('available_credit', 0):,.2f} of credit available. "
+                f"Card ending {result.get('card_last4')} is "
+                f"{result.get('card_status', 'active')}."
+                + (f" Travel notice on file: {'; '.join(notices)}." if notices else "")
+            )
+
+        if name == "get_security_status":
+            # Use each failing check's `basis`, not its label. The labels are written as
+            # the passing state ("No unresolved alerts"), so listing them under "worth your
+            # attention" says the opposite of what is true. The basis describes what was
+            # actually found.
+            failing = [c for c in (result.get("checks") or []) if c.get("result") != "pass"]
+            lines = [
+                f"Your security score is {result.get('security_score')}/100 "
+                f"({result.get('security_grade')}), and account health is "
+                f"{result.get('health_score')}/100 ({result.get('health_grade')}).",
+            ]
+            if failing:
+                lines.append(
+                    f"{len(failing)} of {len(result.get('checks') or [])} checks need "
+                    "attention:\n"
+                    + "\n".join(f"- {c.get('check')}: {c.get('basis')}" for c in failing)
+                )
+            else:
+                lines.append("Every security check is passing.")
+            prot = result.get("protection") or {}
+            lines.append(
+                f"We've screened {prot.get('transactions_screened', 0)} transactions on "
+                f"your account, stopped {prot.get('fraud_blocked', 0)}, and kept "
+                f"{prot.get('pii_fields_tokenized', 0)} pieces of your personal data "
+                f"away from the AI entirely."
+            )
+            return "\n\n".join(lines)
+
+        if name == "plan_travel_budget":
+            rows = "\n".join(
+                f"- {c['category']}: {c['amount']:,.0f}"
+                for c in (result.get("by_category") or [])
+            )
+            return (
+                f"For {result.get('days')} days in {result.get('destination')} I'd budget "
+                f"about **{result.get('recommended_total', 0):,.0f} "
+                f"{result.get('currency', '')}** — that's "
+                f"{result.get('daily_estimate', 0):,.0f} a day plus 15% contingency.\n"
+                + (f"\n{rows}\n" if rows else "")
+                + "\n" + str(result.get("next_step", ""))
+            )
+
+        if name == "get_statement":
+            return (f"Your statement is ready — {result.get('lines')} lines covering your "
+                    f"balance, spending, projections and security checks. You can download "
+                    f"it from the Statements page, and I've sent you a notification "
+                    f"confirming it was issued.")
+
+    # ---- list results ------------------------------------------------------
+    if isinstance(result, list):
+        if not result:
+            return {
+                "list_travel_notices": "You have no travel notices on file.",
+                "list_my_notifications": "You have no recent notifications.",
+                "search_fraud_precedents": "I couldn't find a similar past case.",
+            }.get(name, "There's nothing to show for that.")
+
+        first = result[0]
+        if "amount" in first and "when" in first:
+            rows = "\n".join(
+                f"- {r['when']} · {r['amount']} · {r.get('merchant_category', '')} · "
+                f"{r.get('location', '')}" for r in result[:10]
+            )
+            return f"Here are your most recent transactions:\n{rows}"
+
+        if name == "list_travel_notices":
+            rows = "\n".join(
+                f"- {', '.join(r.get('countries', []))}: {r.get('from')} to {r.get('to')}"
+                for r in result
+            )
+            return f"Travel notices on file:\n{rows}"
+
+        if name == "list_my_notifications":
+            rows = "\n".join(
+                f"- {r.get('when')} · {r.get('subject')}"
+                + ("" if r.get("read") else "  (unread)") for r in result[:10]
+            )
+            return f"Here's what's happened on your account recently:\n{rows}"
+
+        if name == "search_fraud_precedents":
+            rows = "\n".join(
+                f"- {r.get('case_id')}: {r.get('title')} ({r.get('outcome', '')})"
+                for r in result[:5]
+            )
+            return f"Similar cases we've seen before:\n{rows}"
+
     return _fmt_result(result)

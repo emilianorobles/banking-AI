@@ -153,10 +153,25 @@ def compare(rows: list[dict[str, Any]]) -> dict[str, Any]:
     fraud well but over-flags legitimate customers, because a threshold cannot tell a
     genuine annual insurance premium from an anomalous charge. The retrieval layer can,
     because a human analyst already wrote down that distinction in a past case.
-    """
-    baseline = [run_case(r, allow_llm=False) for r in rows]
-    full = [run_case(r, allow_llm=True) for r in rows]
 
+    Takes the raw eval-set rows, NOT the output of `run_case` -- it scores them itself.
+    A caller that has already scored both arms should use `compare_results` instead of
+    paying for every case a second time.
+    """
+    return compare_results(
+        [run_case(r, allow_llm=False) for r in rows],
+        [run_case(r, allow_llm=True) for r in rows],
+    )
+
+
+def compare_results(baseline: list[dict[str, Any]],
+                    full: list[dict[str, Any]]) -> dict[str, Any]:
+    """Assemble the A/B from two sets of already-scored results.
+
+    Split out from `compare` so a UI that scores the arms itself -- reporting progress as
+    it goes, because thirty-eight model calls is a long silence -- can reuse the metrics
+    without re-running anything.
+    """
     bm, fm = summarise(baseline), summarise(full)
     return {
         "baseline": bm,

@@ -92,6 +92,7 @@ POST /api/transactions   (Flask web/routes/ingest.py           │
 | **No chart library, no CDN** | Charts are hand-drawn SVG in `web/static/js/charts.js`. A CDN would put the demo one wifi failure away from an unstyled page, and offline survival is a stated requirement. |
 | **FastAPI kept, but thin (~80 lines)** | It is the live-demo injection mechanism (POST from a phone → dashboard lights up) and it makes the "separated layers" rubric claim true. All logic stays in `core/`. |
 | **Explicit Python orchestration, not LangGraph** | Regulated domain: a traceable, auditable, deterministic control flow beats a framework graph. Also removes an install risk. Say this out loud in the pitch. |
+| **A secondary chat provider behind a circuit breaker** | The TCS endpoint 503s during working hours. `core/llm.py` degrades in four stages — primary → recorded cache → secondary provider → rules only — and a breaker stops it paying a 20s timeout per call once the primary is down. Nothing above `llm.chat()` knows any of this happened. |
 | **Rules run before the LLM** | ~94% of transactions never hit the LLM. This is the entire cost-effectiveness argument, and it is measured live in the Admin cost meter. |
 | **Only ~80 fraud-case narratives in FAISS, not all transactions** | Small index = fast, cheap, and visibly relevant retrieval on stage. |
 | **PII tokenization, not masking** | `4532...` → `<PAN_7f3a>`. The model still reasons about "the same card" without ever seeing it. |
@@ -208,6 +209,54 @@ it and `renderDrill()` draws whatever the endpoint returns.
 key in the URL.** Passing someone else's id returns your own data. `alert` and `cost` are
 staff-only and audit the attempt.
 
+## Provider resilience — what happens when TCS goes down
+
+It does go down. Observed during working hours:
+`503 no_db_connection — "the authentication database is temporarily unreachable"`.
+
+`llm.chat()` degrades in four stages, and nothing above it knows:
+
+| | | |
+|---|---|---|
+| 1 | **Primary** (TCS gpt-4.1) | normal path |
+| 2 | **Recorded cache** | ~40 ms, deterministic, no network. Scripted beats replay exactly as rehearsed |
+| 3 | **Secondary provider** (Groq, opt-in) | ~2 s, handles anything the cache cannot — an improvised question from a judge |
+| 4 | **Rules only** | the agent answers from the database and says so |
+
+Cache **before** fallback is deliberate: a rehearsed beat should replay identically and
+instantly, not be re-improvised by a different model live on stage.
+
+**Enable the secondary provider** by setting `FALLBACK_API_KEY` in
+`.streamlit/secrets.toml` (gitignored) — see `secrets.toml.example`. Unset, stages 1, 2
+and 4 still work exactly as before.
+
+### The circuit breaker is what makes it usable
+
+Measured with the primary dead and *no* breaker: **17–26 s per beat**, every answer
+correct, demo destroyed. The cost was the timeout, paid on every call — and a fallback you
+reach after 20 s is worthless.
+
+Two consecutive primary failures now open the circuit for 60 s; calls skip the primary
+entirely. Same breaker covers **embeddings**, which is where most of the time went —
+`rag.search_balanced()` embeds twice per transaction, so protecting only chat barely
+helped. Any success closes it, so a recovered endpoint is picked up without a restart.
+
+With the breaker primed, all 7 beats run in **16–212 ms** with the primary dead, citations
+intact. **Press Run pre-flight check before the demo**: it probes the primary and absorbs
+that first 20 s timeout, so beat 1 is already fast — and it now reports honestly which
+provider is actually serving chat.
+
+### What the fallback cannot do
+
+**Groq serves no embedding model.** Retrieval therefore still depends on the primary or on
+`data/cached_embeddings.json`. Citations survive for the scripted scenarios because those
+query vectors are recorded; a brand-new transaction gets no precedents while the primary is
+down. Pre-flight says so in as many words. Don't claim otherwise on stage — the honest
+line is *"retrieval degrades to its cache, chat fails over to a second provider."*
+
+Free tier: 1,000 requests/day, **8,000 tokens/minute**. Ample for a 10-minute demo, too
+tight to push the 38-case evaluation harness through.
+
 ### Every action alerts the customer
 
 `core/notifications.py` was written but wired to nothing. It now fires from three places:
@@ -286,6 +335,54 @@ configured (`SMTP_HOST` etc.) and the send succeeded — the UI says plainly whe
     itself. Now `hashlib.sha256`. **Anything presented to a user as a stable fact must
     never depend on `hash()`.**
 
+11. **Every gauge above 50 drew the wrong arc.** `SBCharts.gauge` set the SVG large-arc
+    flag from `(to - from) > .5`, confusing "more than half the *gauge*" with "more than
+    half a *circle*". The gauge is a half circle, so its sweep can never exceed 180° and
+    the flag must always be 0. Above 50 the browser took the long way round and drew the
+    complement — at 71 it rendered 308px of arc where 169.5px was correct, appearing as
+    two stubs wrapping under the dial. The grey track hid it because `arcPath(0, 1)` is
+    exactly 180°, where both flag values draw the same path. Worst part: at 97% the
+    complement is 245px against a correct 232px, so the **cost gauge looked almost right**
+    and would never have been caught by eye. Verify arcs by measuring `getTotalLength()`
+    against the value they claim to show, not by looking at them.
+
+    Same pass: `bars()` truncated any label over 7 characters by keeping the *last* five,
+    so "Legitimate" rendered as "imate" and "AMERICAS" as "ricas" — on bars with 260px of
+    room. Now fits the label to the available width and elides from the end.
+
+12. **The offline chat cache missed whenever the provider was down** — i.e. always, when
+    it mattered. `_chat_cache_key` included the routed intent, but `router.classify` asks
+    the *model* when no pattern matches. So "Why was my card frozen?" was recorded under
+    `card_control` (API up) and looked up under `general` (API down): the response sat
+    behind a key the lookup could no longer compute. The key is now the normalised
+    question plus loop step and nothing else. **Never derive a fallback's cache key from
+    anything that depends on the thing being fallen back from.**
+
+    Two further gaps in the same path, both found by pointing `GENAILAB_BASE_URL` at a
+    dead host and talking to the agent:
+
+    - `_finalise()` (the second call, which phrases the tool result) passed no cache key,
+      so it hashed a prompt containing live balances and timestamps — a hash that never
+      repeats and therefore never replays. Its `_readable_fallback` only covered four of
+      the fourteen tools, so the rest dumped **raw JSON into the chat bubble**. It now
+      covers every tool and formats the *real* result rather than replaying recorded
+      prose: stale figures shown as current are a worse failure in a bank than plain
+      wording.
+    - A question that was never recorded got a dead end. On the first step, an
+      unreachable model now falls through to `router.primary_tool(intent)` — read-only and
+      scoped to the caller — and answers from the database, saying plainly that it is
+      doing so. "What is my balance?" returns the real balance with the endpoint dead.
+
+13. **Run evaluation crashed with `Transaction.__init__() got an unexpected keyword
+    argument 'label'`.** `evaluation.compare()` takes the raw eval-set *rows* and scores
+    them itself; the route handed it the *results* of `run_case`, whose dicts carry a
+    `label` key. Passing rows would have fixed the crash but scored every case a third
+    time. `compare_results(baseline, full)` is now the pure function over already-scored
+    arms, `compare(rows)` delegates to it, and the route scores each arm once — rules
+    first, so the progress bar moves before the first model call. **A function that takes
+    `rows` and one that returns rows are not the same shape; name and type them so the
+    difference is visible at the call site.**
+
 ### Stateful demo traps (all three are pre-flight checklist items)
 
 The **Run pre-flight check** button on Demo control fixes the first two and reports what it
@@ -327,7 +424,8 @@ add points.
 | Rule separation | fraud mean **89.0** vs legitimate **2.0** |
 | Recall | **100%** (rules alone, and with the agent) |
 | Legitimate customers blocked | **0** — before and after the agent |
-| Legitimate customers challenged | **12 → 9** with the agent |
+| Legitimate customers challenged | **12 → 7** with the agent (5 false positives removed) |
+| False positive rate | **43% → 25%** · precision **45% → 59%** |
 | Groundedness | **100%** — no fabricated citations |
 | Hard eval cases that defeat rules alone | **7 of 8**; agent resolves 3 |
 | p95 latency | ~3.4 s model calls · ~9 ms cheap path |
@@ -344,7 +442,14 @@ asked to confirm. Know that distinction before a judge asks — the honest answe
 step-up verification is the correct action on a genuinely ambiguous transaction, and the
 target is stricter than the behaviour deserves.
 
-**Be honest about the A/B in the pitch.** The rules are strong enough that the model adds
-little raw detection accuracy. Its real value is the explanation an analyst needs to act,
-the cited precedent that makes it auditable, and the learning loop. Saying that — and
-showing you measured it — beats claiming an improvement you cannot evidence.
+**Be honest about the A/B in the pitch — and it is better than we first wrote it up.**
+The model adds no raw *detection*: recall is 100% either way, and rules alone already block
+nobody legitimate. What it measurably adds is precision. On the same 38 cases it removed
+**5 of the 12** step-up challenges the rules imposed on legitimate customers — false
+positive rate 43% → 25%, precision 45% → 59% — **with zero extra fraud missed**. That is
+five real customers not interrupted, for $0.17 of inference.
+
+Then the parts that do not fit in a metric: the explanation an analyst needs to act, the
+cited precedent that makes the decision auditable, and the learning loop. Lead with the
+measured number, follow with those. Run it live on the Evaluation page — the A/B table
+builds itself.

@@ -155,23 +155,53 @@ _EVAL_LOCK = threading.Lock()
 
 
 def _run_eval(allow_llm: bool) -> None:
+    """Score the eval set, reporting progress as it goes.
+
+    Two arms when the agent is enabled: rules only, then the full pipeline. We score each
+    arm once and hand both to `evaluation.compare_results`. Calling `evaluation.compare`
+    instead would re-score every case from scratch -- it takes the raw eval rows, not
+    results -- which is both a third pass of model calls and, if you feed it results,
+    a crash, because a result dict carries a `label` key that `Transaction` has no
+    field for.
+    """
     try:
         rows = evaluation.load_eval_set()
+        arms = 2 if allow_llm else 1
         with _EVAL_LOCK:
-            _EVAL.update(state="running", done=0, total=len(rows), results=[],
+            _EVAL.update(state="running", done=0, total=len(rows) * arms, results=[],
                          summary=None, comparison=None, error=None)
-        results = []
-        for row in rows:
-            results.append(evaluation.run_case(row, allow_llm=allow_llm))
-            with _EVAL_LOCK:
-                _EVAL["done"] = len(results)
-                _EVAL["results"] = results
+
+        done = 0
+
+        def score(arm_allow_llm: bool) -> list[dict]:
+            nonlocal done
+            out = []
+            for row in rows:
+                out.append(evaluation.run_case(row, allow_llm=arm_allow_llm))
+                done += 1
+                with _EVAL_LOCK:
+                    _EVAL["done"] = done
+                    # Show the agentic arm's rows; the baseline is only there for the A/B.
+                    if arm_allow_llm or not allow_llm:
+                        _EVAL["results"] = out
+            return out
+
+        if allow_llm:
+            # Rules first: it is the fast arm, so the progress bar moves immediately
+            # rather than sitting still through the first model call.
+            baseline = score(False)
+            full = score(True)
+            comparison = evaluation.compare_results(baseline, full)
+        else:
+            full = score(False)
+            comparison = None
+
         with _EVAL_LOCK:
-            _EVAL.update(state="done", summary=evaluation.summarise(results),
-                         comparison=evaluation.compare(results))
+            _EVAL.update(state="done", results=full,
+                         summary=evaluation.summarise(full), comparison=comparison)
     except Exception as exc:
         with _EVAL_LOCK:
-            _EVAL.update(state="error", error=str(exc))
+            _EVAL.update(state="error", error=f"{type(exc).__name__}: {exc}")
 
 
 @bp.get("/evaluation")
