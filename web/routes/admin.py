@@ -16,7 +16,8 @@ from typing import Any
 from flask import (Blueprint, flash, jsonify, redirect, render_template,
                    request, url_for)
 
-from core import config, db, evaluation, llm, notifications as notif, rag, rules
+from core import (casework, config, db, evaluation, llm, money, money_ops,
+                  notifications as notif, rag, rules)
 
 from .. import auth
 
@@ -75,67 +76,43 @@ def alert_queue():
 
 @bp.post("/queue/<alert_id>/resolve")
 def resolve(alert_id: str):
-    """The human checkpoint, and the learning loop's entry point."""
-    alert = db.get_alert(alert_id)
-    if alert is None:
-        flash("No such alert.", "danger")
-        return redirect(url_for("admin.alert_queue"))
-    if alert.status != "PENDING":
-        flash("That alert has already been resolved.", "warn")
-        return redirect(url_for("admin.alert_queue"))
+    """The human checkpoint, and the learning loop's entry point.
 
-    txn = db.get_transaction(alert.txn_id)
-    outcome = request.form.get("outcome")
-    note = (request.form.get("note") or "").strip()
+    The work is in `core.casework.resolve_alert`, because the analyst assistant's
+    `resolve_alert` tool calls the same function. Two implementations of the learning
+    loop would drift, and they would drift in the demo's climax.
+    """
     user = auth.current_user() or {}
-    actor = f"analyst:{user.get('username', 'ops')}"
+    actor = f"{user.get('role', 'analyst')}:{user.get('username', 'ops')}"
 
-    if outcome not in ("confirmed_fraud", "false_positive"):
-        flash("Unknown outcome.", "danger")
-        return redirect(url_for("admin.alert_queue"))
+    result = casework.resolve_alert(
+        alert_id,
+        request.form.get("outcome") or "",
+        (request.form.get("note") or "").strip(),
+        actor=actor,
+    )
 
-    default_note = ("Confirmed fraudulent by analyst review."
-                    if outcome == "confirmed_fraud" else
-                    "Cleared by analyst; legitimate customer activity.")
+    if not result.get("ok"):
+        flash(result.get("error", "That alert could not be resolved."), "danger")
+        return redirect(url_for("admin.alert_queue", region=_region()))
 
-    case_id = None
-    if txn is not None:
-        try:
-            case = rag.learn_from_alert(alert, txn, outcome, note or default_note, actor)
-            case_id = case.case_id
-        except Exception as exc:
-            flash(f"Resolved, but the case could not be indexed: {exc}", "warn")
+    if result.get("index_error"):
+        flash(f"Resolved, but the case could not be indexed: {result['index_error']}",
+              "warn")
 
-    if outcome == "false_positive":
-        db.set_card_frozen(alert.customer_id, False)
+    # Money the engine was holding behind this alert now settles or drops.
+    held = (money_ops.settle_if_held(result["txn_id"], actor=actor)
+            if result["outcome"] == "false_positive"
+            else money_ops.cancel_if_held(result["txn_id"], actor=actor))
 
-    db.resolve_alert(alert_id, outcome, resolved_by=actor, note=note,
-                     learned_case_id=case_id)
-    db.audit(actor=actor, event_type="APPROVAL", subject_id=alert_id,
-             detail=(f"{outcome}; "
-                     f"{'freeze upheld' if outcome == 'confirmed_fraud' else 'card unfrozen'}"
-                     f"; learned {case_id}"))
+    message = result["message"]
+    if held and held.get("settled"):
+        message += (f" The held payment of {money.fmt(held['amount_value'], held['currency'])}"
+                    f" to {held['destination']} has been released.")
+    elif held and held.get("cancelled"):
+        message += " The held payment has been cancelled."
 
-    # The customer hears about it either way. An analyst clearing a freeze without
-    # telling anyone leaves the customer still believing their card is dead.
-    if outcome == "confirmed_fraud":
-        notif.notify(alert.customer_id, kind="fraud_alert", severity="danger",
-                     subject="Fraud confirmed on your card",
-                     body="Our fraud team reviewed the transaction we stopped and confirmed "
-                          "it was not you. Your card stays frozen and a replacement is on "
-                          "its way.",
-                     detail=note, related_id=alert_id)
-    else:
-        notif.notify(alert.customer_id, kind="fraud_alert", severity="ok",
-                     subject="Your card is active again",
-                     body="Our fraud team reviewed the transaction we flagged and confirmed "
-                          "it was genuine. Your card has been unfrozen.",
-                     detail=note, related_id=alert_id)
-
-    flash(("Confirmed as fraud" if outcome == "confirmed_fraud" else
-           "Cleared as a false positive")
-          + (f" — indexed as {case_id}, retrievable immediately." if case_id else "."),
-          "danger" if outcome == "confirmed_fraud" else "ok")
+    flash(message, "danger" if result["outcome"] == "confirmed_fraud" else "ok")
     return redirect(url_for("admin.alert_queue", region=_region()))
 
 

@@ -36,6 +36,13 @@ def login_post():
                                username=username), 401
 
     auth.login_user(user)
+
+    # Arm the post-login fraud prompt. Customers only: staff land on /ops/overview, which
+    # IS the queue, and a modal about someone else's account would be noise there. The
+    # flag is one-shot -- `GET /api/alerts/pending` pops it -- so the prompt fires once
+    # per sign-in rather than on every navigation.
+    session["alert_popup_pending"] = user["role"] == "customer"
+
     nxt = request.form.get("next") or request.args.get("next")
     if nxt and nxt.startswith("/"):      # never redirect off-site on a login hop
         return redirect(nxt)

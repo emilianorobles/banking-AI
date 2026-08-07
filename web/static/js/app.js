@@ -478,6 +478,154 @@
     return (opts.code === false || sym === c) ? out : `${out} ${c}`;
   }
 
+  /* --------------------------------------------------- post-login fraud prompt
+     A pending alert used to reach the customer as a 6-second toast they had to already
+     be looking at, plus a page they had to navigate to. If the bank has frozen your card
+     it should be the first thing you are told, and it should be answerable on the spot --
+     so this opens the moment they sign in, and both answers post to the SAME endpoint the
+     Alerts page uses. No decision logic is duplicated here. */
+
+  function alertPromptHtml(a) {
+    const reasons = (a.reasons || []).filter(r => r.plain).slice(0, 4);
+    const held = a.held_amount
+      ? `<div class="note note-warn" style="margin-top:.6rem">
+           <strong>${escapeHtml(a.held_amount)} to ${escapeHtml(a.held_to)} is on hold.</strong>
+           <div class="tiny">The money has not left your account. Confirming below releases it.</div>
+         </div>`
+      : "";
+    return `
+      <div class="note note-danger">
+        <strong>${escapeHtml(a.summary || "We stopped a transaction on your account")}</strong>
+        <div class="tiny" style="margin-top:.3rem">
+          Risk ${a.risk_score}/100 (${escapeHtml(a.risk_level || "")}) ·
+          ${escapeHtml(a.action || "")} · raised ${escapeHtml(a.raised || "")}
+        </div>
+      </div>
+      <dl class="kv" style="margin-top:.7rem">
+        <dt>Amount</dt><dd>${escapeHtml(a.amount || "")}</dd>
+        <dt>Merchant</dt><dd>${escapeHtml(a.merchant || "")}</dd>
+        <dt>Where</dt><dd>${escapeHtml(a.location || "")}</dd>
+        <dt>How</dt><dd>${escapeHtml(a.channel || "")}</dd>
+      </dl>
+      ${reasons.length ? `<div class="label" style="margin-top:.8rem">Why we stopped it</div>
+        <ul class="tiny">${reasons.map(r =>
+          `<li><strong>${escapeHtml(r.title || "")}</strong> — ${escapeHtml(r.plain)}</li>`).join("")}</ul>` : ""}
+      ${held}
+      <div class="row" style="margin-top:1rem;gap:.5rem;flex-wrap:wrap">
+        <button class="btn btn-ok"    data-verdict="genuine" data-alert="${escapeHtml(a.alert_id)}">
+          Yes — that was me</button>
+        <button class="btn btn-danger" data-verdict="fraud"  data-alert="${escapeHtml(a.alert_id)}">
+          No — freeze my card</button>
+        <button class="btn btn-ghost" data-ask-alert>Ask the assistant</button>
+      </div>
+      <div class="tiny dim" style="margin-top:.6rem">
+        You can also answer this later on your Alerts page.
+      </div>`;
+  }
+
+  function wireAlertPrompt(alerts) {
+    let i = 0;
+    function show() {
+      const a = alerts[i];
+      if (!a) { closeModal(); return; }
+      openModal(alertPromptHtml(a), {
+        title: alerts.length > 1
+          ? `Please check this — ${i + 1} of ${alerts.length}`
+          : "Please check this transaction",
+        subtitle: "We stopped it and need you to confirm before we do anything else",
+      });
+      const host = document.getElementById("modal-host");
+      host.querySelectorAll("[data-verdict]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          host.querySelectorAll("button").forEach(b => b.disabled = true);
+          /* A form post, not fetch: `respond_alert` redirects and flashes, and letting
+             the browser follow that keeps one code path for both entry points. */
+          const f = document.createElement("form");
+          f.method = "post";
+          f.action = `/alerts/${encodeURIComponent(btn.dataset.alert)}/respond`;
+          f.innerHTML = `<input type="hidden" name="verdict" value="${btn.dataset.verdict}">`;
+          document.body.appendChild(f);
+          f.submit();
+        });
+      });
+      const ask = host.querySelector("[data-ask-alert]");
+      if (ask) ask.addEventListener("click", () => {
+        closeModal();
+        if (window.SBChat) SBChat.ask("Why was this transaction stopped?");
+      });
+    }
+    show();
+  }
+
+  async function checkPendingAlerts() {
+    try {
+      const d = await getJSON("/api/alerts/pending");
+      if (d.just_signed_in && (d.alerts || []).length) wireAlertPrompt(d.alerts);
+    } catch (_) { /* never block a page load over this */ }
+  }
+
+  /* ------------------------------------------------------- password change form
+     Opened by the assistant via `ui_action`, but the password itself goes straight from
+     this form to /account/password. It is never a chat message, so it never reaches a
+     prompt, the conversation history, or the recorded response cache. */
+
+  function passwordFormHtml() {
+    return `
+      <form id="pw-form" autocomplete="off">
+        <div class="note note-ok tiny">
+          We never see this in chat — it posts straight to your account.
+        </div>
+        <label class="label" style="margin-top:.8rem" for="pw-cur">Current password</label>
+        <input id="pw-cur" type="password" name="current_password" autocomplete="current-password">
+        <label class="label" style="margin-top:.6rem" for="pw-new">New password</label>
+        <input id="pw-new" type="password" name="new_password" autocomplete="new-password" required>
+        <label class="label" style="margin-top:.6rem" for="pw-cnf">Confirm new password</label>
+        <input id="pw-cnf" type="password" name="confirm_password" autocomplete="new-password" required>
+        <div class="row" style="margin-top:.6rem;gap:.5rem">
+          <button class="btn btn-sm btn-ghost" type="button" data-suggest>Suggest a strong one</button>
+          <span class="tiny dim" data-suggestion></span>
+        </div>
+        <div class="note note-warn tiny hidden" data-pw-error style="margin-top:.7rem"></div>
+        <div class="row" style="margin-top:1rem;gap:.5rem">
+          <button class="btn btn-primary" type="submit">Update password</button>
+          <button class="btn btn-ghost" type="button" data-close>Cancel</button>
+        </div>
+      </form>`;
+  }
+
+  function openPasswordForm() {
+    openModal(passwordFormHtml(), {
+      title: "Change your password",
+      subtitle: "Typed here, not in the chat",
+    });
+    const host = document.getElementById("modal-host");
+    const form = host.querySelector("#pw-form");
+    const err = host.querySelector("[data-pw-error]");
+
+    host.querySelector("[data-suggest]").addEventListener("click", async () => {
+      try {
+        const d = await getJSON("/api/account/passphrase");
+        host.querySelector("[data-suggestion]").textContent = d.passphrase || "";
+      } catch (_) { /* suggestion is a convenience, never a blocker */ }
+    });
+    form.querySelectorAll("[data-close]").forEach(b =>
+      b.addEventListener("click", closeModal));
+
+    form.addEventListener("submit", async e => {
+      e.preventDefault();
+      err.classList.add("hidden");
+      const body = Object.fromEntries(new FormData(form).entries());
+      try {
+        const d = await postJSON("/account/password", body);
+        closeModal();
+        toast("Password updated", d.message || "", "ok");
+      } catch (ex) {
+        err.textContent = ex.message || "That didn't work.";
+        err.classList.remove("hidden");
+      }
+    });
+  }
+
   /* ------------------------------------------------------------------ init */
   document.addEventListener("DOMContentLoaded", () => {
     wireDrilldowns();
@@ -490,12 +638,16 @@
       pollNotifications();
       setInterval(pollNotifications, 5000);
     }
+    if (document.body.dataset.alertPopup === "1") checkPendingAlerts();
   });
 
   global.SB = {
     getJSON, postJSON, toast, openModal, closeModal, loadingModal,
     drill, wireDrilldowns, escapeHtml, money, prettyKey, renderDrill,
     pollNotifications, applyMask, applyTheme, toggleTheme, currentTheme,
-    paintCharts, chartSpecs, chartSlot,
+    paintCharts, chartSpecs, chartSlot, checkPendingAlerts,
   };
+
+  /* The chat widget calls this when a tool returns ui_action: "password_form". */
+  global.SBAccount = { openPasswordForm };
 })(window);

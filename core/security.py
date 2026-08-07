@@ -243,9 +243,27 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("chat_markup", re.compile(
         r"(<\|im_(start|end)\|>|\[/?INST\]|<<SYS>>|^\s*(system|assistant)\s*:)",
         re.IGNORECASE | re.MULTILINE)),
+    # Exfiltration is DATA leaving to somewhere it should not go. It is emphatically not
+    # "send 2000 to Priya".
+    #
+    # The original pattern was `(send|post|email|...)` within 30 characters of `to |http|@`,
+    # and the bare `to ` made it fire on the single most common sentence a banking
+    # assistant will ever be asked: "Send 180000 to Rohan Das" was blocked as an
+    # exfiltration attempt, with the refusal text about not changing how the assistant
+    # works. A guardrail that blocks the product's main verb is worse than no guardrail,
+    # because it looks like a considered refusal.
+    #
+    # Split in two, both under the same category so the reported shape is unchanged:
+    # a verb aimed at an external DESTINATION, or a verb aimed at a sensitive OBJECT.
     ("exfiltration", re.compile(
-        r"\b(send|post|email|forward|upload|exfiltrate)\b[^.]{0,30}?"
-        r"\b(to |http|https|@)", re.IGNORECASE)),
+        r"\b(send|post|email|forward|upload|exfiltrate|leak|transmit)\b[^.]{0,40}?"
+        r"(https?://|www\.|[\w.+-]+@[\w-]+\.[a-z]{2,})", re.IGNORECASE)),
+    ("exfiltration", re.compile(
+        r"\b(send|post|email|forward|upload|exfiltrate|leak|transmit|reveal|share|dump)\b"
+        r"[^.]{0,40}?\b(system prompt|your (prompt|instructions|rules|configuration)|"
+        r"api[ _-]?key|secret|token|credential|password|chat history|conversation|"
+        r"(these|the|all) instructions|customer (data|records|list)|database|"
+        r"card number|full (pan|card))\b", re.IGNORECASE)),
 ]
 
 
@@ -320,3 +338,45 @@ def validate_citations(cited: list[str], known: set[str]) -> tuple[bool, list[st
     """
     fabricated = [c for c in cited if c not in known]
     return (not fabricated), fabricated
+
+
+# --------------------------------------------------------------------------- #
+# Password storage
+# --------------------------------------------------------------------------- #
+#
+# PBKDF2-HMAC-SHA256, per-customer random salt. Not the fastest thing to write and
+# deliberately not the fastest thing to run -- the iteration count is the whole defence
+# if the database is ever taken.
+#
+# These live here rather than in `db.py` so that module never handles a plaintext
+# password at all: callers derive the hash and hand over the digest. There is no code
+# path through persistence by which a password could be logged or cached.
+#
+# Nothing in this section is ever reachable from an agent tool. The assistant opens the
+# form; the form posts to a plain route; the route calls these. A password is never a
+# tool argument, so it never enters a prompt, the conversation history, or the offline
+# response cache.
+
+PBKDF2_ITERATIONS = 240_000
+
+
+def hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
+    """Return (hex_digest, hex_salt). A new random salt unless one is supplied."""
+    import os
+    salt = salt or os.urandom(16).hex()
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", (password or "").encode("utf-8"), bytes.fromhex(salt),
+        PBKDF2_ITERATIONS)
+    return digest.hex(), salt
+
+
+def verify_password(password: str, expected_hash: str, salt: str) -> bool:
+    """Constant-time comparison, so a wrong password cannot be found a byte at a time."""
+    import hmac
+    if not expected_hash or not salt:
+        return False
+    try:
+        candidate, _ = hash_password(password, salt)
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(candidate, expected_hash)

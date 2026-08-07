@@ -9,7 +9,9 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
   {% block head %}{% endblock %}
 </head>
-<body data-poll="1">
+{# `data-alert-popup` arms the post-login fraud prompt in app.js. Session-flagged rather
+   than always-on, so a customer sees it once when they sign in, not on every page. #}
+<body data-poll="1"{% if session.get('alert_popup_pending') %} data-alert-popup="1"{% endif %}>
 <div class="shell">
 
   <aside class="sidebar">

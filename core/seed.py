@@ -65,6 +65,56 @@ def score_history(txns: list[Transaction]) -> int:
     return len(decisions)
 
 
+def _seed_payees(customers: list[Customer]) -> int:
+    """Give the hero customer a payee book, and a credential row.
+
+    Two payees they have paid before and one they have not, because the difference is the
+    demo: a transfer to a known payee settles, and a first payment to a new one is tagged
+    `wire_transfer` and screened as the high-risk category it is. Without a paid-before
+    payee on file there is nothing to contrast the flagged transfer against.
+
+    The paid-before payees are INTERNAL -- their account numbers belong to other seeded
+    customers -- so a transfer visibly credits the other side rather than evaporating.
+    """
+    by_id = {c.customer_id: c for c in customers}
+    hero = by_id.get("CUST-0001")
+    if hero is None:
+        return 0
+
+    counterparts = [by_id.get("CUST-0002"), by_id.get("CUST-0003")]
+    rows = [
+        ("PAYEE-priya", "Priya Sharma", counterparts[0], 4, "2026-07-28T09:12:00+00:00"),
+        ("PAYEE-arjun", "Arjun Mehta", counterparts[1], 2, "2026-07-11T18:40:00+00:00"),
+        # Saved but never paid: the "first payment gets extra checks" state, visible in
+        # the payee list before anyone tries to use it.
+        ("PAYEE-landlord", "Kavery Residency (rent)", None, 0, None),
+    ]
+
+    made = 0
+    for payee_id, name, other, count, last_used in rows:
+        db.save_payee(
+            payee_id, hero.customer_id, name,
+            account_number=(other.account_number if other else "77410092318"),
+            kind="internal" if other else "external",
+            internal_customer_id=other.customer_id if other else None,
+            transfer_count=count, last_used_at=last_used,
+        )
+        made += 1
+
+    # One credential row, for the hero only. PBKDF2 at 240k iterations is deliberately
+    # slow, and 200 of them would add ~20s to every reseed for no demonstrable value --
+    # a customer with no row can set a password without supplying the old one, which is
+    # the correct bootstrap behaviour anyway.
+    try:
+        from . import security
+        digest, salt = security.hash_password("demo")
+        db.set_password_hash(hero.customer_id, digest, salt)
+    except Exception:
+        pass
+
+    return made
+
+
 def seed(reset: bool = False, build_index: bool = True) -> dict:
     if reset:
         print("Resetting database...")
@@ -95,6 +145,9 @@ def seed(reset: bool = False, build_index: bool = True) -> dict:
     customers = [Customer(**c) for c in _load_json(config.CUSTOMERS_PATH)]
     db.upsert_customers(customers)
     print(f"  customers        {len(customers):>5}")
+
+    payees = _seed_payees(customers)
+    print(f"  payees           {payees:>5}  (hero account, for money movement)")
 
     txns = [Transaction(**t) for t in _load_json(config.TRANSACTIONS_PATH)]
     db.insert_transactions(txns)

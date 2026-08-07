@@ -10,10 +10,15 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from flask import (Blueprint, Response, flash, redirect, render_template,
-                   request, url_for)
+from flask import (Blueprint, Response, flash, jsonify, redirect, render_template,
+                   request, session, url_for)
 
-from core import db, insights, notifications as notif, rag, travel
+# `security` is aliased because this module defines a view function called `security()`
+# for the /security page, which would shadow the import at every call site below it.
+# Renaming the view would break `url_for('customer.security')` in the templates; aliasing
+# the import breaks nothing.
+from core import (db, insights, money, money_ops, notifications as notif, rag, rules,
+                  security as core_security, travel)
 from core.contracts import CaseOutcome
 
 from .. import auth
@@ -258,13 +263,143 @@ def respond_alert(alert_id: str):
     db.audit(actor=f"customer:{cid}", event_type="ALERT_RESOLVED", subject_id=alert_id,
              detail=f"{outcome} by customer", learned_case_id=case_id)
 
+    # If the fraud engine was holding money behind this alert, the customer's verdict is
+    # what releases or drops it. This is the loop closing: the engine holds, a human
+    # decides, the money moves -- and the same action embeds the case into FAISS above.
+    held = (money_ops.settle_if_held(alert.txn_id, actor=f"customer:{cid}")
+            if verdict != "fraud" else
+            money_ops.cancel_if_held(alert.txn_id, actor=f"customer:{cid}"))
+
     notif.notify(cid, kind="fraud_alert", severity=severity, subject=subject, body=body,
                  detail=(f"Recorded as case {case_id}, which the system can now cite when "
                          f"judging similar transactions." if case_id else ""),
                  related_id=alert_id)
 
-    flash(subject, "danger" if verdict == "fraud" else "ok")
+    if held and held.get("settled"):
+        flash(f"{subject} — your held payment of "
+              f"{money.fmt(held['amount_value'], held['currency'])} to "
+              f"{held['destination']} has been released.", "ok")
+    else:
+        flash(subject, "danger" if verdict == "fraud" else "ok")
     return redirect(url_for("customer.alerts"))
+
+
+# --------------------------------------------------------------------------- #
+# The pending-alert prompt shown once, right after signing in
+# --------------------------------------------------------------------------- #
+
+@bp.get("/api/alerts/pending")
+@auth.login_required
+def pending_alerts():
+    """Alerts this customer has not answered yet, for the post-login modal.
+
+    Always the session's customer, never a key from the URL -- the same rule the drill
+    API states, for the same reason.
+
+    Reading this clears the one-shot session flag, so the prompt fires once per sign-in
+    rather than on every page load. A customer who dismisses it can still reach every
+    alert on the Alerts page; nagging them on each navigation would train them to click
+    it away, which is the opposite of what a fraud prompt is for.
+    """
+    cid = auth.active_customer_id()
+    fired = session.pop("alert_popup_pending", False)
+
+    rows = []
+    for a in db.list_alerts(status="PENDING", limit=200):
+        if a.customer_id != cid:
+            continue
+        txn = db.get_transaction(a.txn_id)
+        decision = db.get_decision(a.txn_id) or {}
+        transfer = db.get_transfer_for_txn(a.txn_id)
+        rows.append({
+            "alert_id": a.alert_id,
+            "txn_id": a.txn_id,
+            "risk_score": a.risk_score,
+            "risk_level": a.risk_level,
+            "action": a.action,
+            "summary": a.summary,
+            "raised": a.created_at[:16].replace("T", " "),
+            "amount": money.fmt(txn.amount, txn.currency) if txn else "",
+            "merchant": txn.merchant if txn else "",
+            "location": f"{txn.city}, {txn.country}" if txn else "",
+            "channel": txn.channel if txn else "",
+            # Plain English, from RULE_META -- the single declaration site the drill-downs
+            # read too, so the modal cannot show a different reason from the pill.
+            "reasons": [
+                {"rule_id": h.get("rule_id"),
+                 "title": (rules.meta(h.get("rule_id")).title
+                           if h.get("rule_id") else ""),
+                 "plain": (rules.meta(h.get("rule_id")).plain
+                           if h.get("rule_id") else h.get("reason", ""))}
+                for h in (decision.get("rule_hits") or [])
+            ],
+            "held_amount": (money.fmt(transfer["amount"], transfer["currency"])
+                            if transfer and transfer.get("status") == "pending" else ""),
+            "held_to": (transfer.get("destination")
+                        if transfer and transfer.get("status") == "pending" else ""),
+        })
+
+    rows.sort(key=lambda r: r["risk_score"], reverse=True)
+    return jsonify({"just_signed_in": bool(fired), "count": len(rows), "alerts": rows})
+
+
+# --------------------------------------------------------------------------- #
+# Password
+# --------------------------------------------------------------------------- #
+
+@bp.post("/account/password")
+@auth.login_required
+def change_password():
+    """Set a new password.
+
+    A plain form route, deliberately NOT an agent tool. The assistant's entire role is to
+    open this form (`start_password_change`); what the customer types goes straight here.
+    So the plaintext never enters a prompt, the conversation history, the offline response
+    cache, or an audit row -- there is no code path by which it could.
+    """
+    cid = auth.active_customer_id()
+    # The modal posts JSON (via SB.postJSON); accept a plain form body too so the route
+    # works without JavaScript. Reading only `request.form` silently saw an empty string
+    # for every field of a JSON body and rejected the correct password.
+    payload = request.get_json(silent=True) or request.form
+    current = payload.get("current_password") or ""
+    new = payload.get("new_password") or ""
+    confirm = payload.get("confirm_password") or ""
+
+    creds = db.get_credentials(cid)
+    # No credential row yet means the customer has never set one, so there is no current
+    # password to prove. First-time set requires only the new one.
+    if creds and not core_security.verify_password(
+            current, creds["password_hash"], creds["salt"]):
+        db.audit(actor=f"customer:{cid}", event_type="GUARDRAIL", subject_id=cid,
+                 detail="Password change refused: current password did not match")
+        return jsonify({"ok": False, "error": "That current password isn't right."}), 400
+    if new != confirm:
+        return jsonify({"ok": False, "error": "The two new passwords don't match."}), 400
+
+    score, verdict, suggestions = insights.password_strength(new)
+    if score < 50:
+        return jsonify({"ok": False, "error": f"That password is {verdict.lower()}.",
+                        "score": score, "suggestions": suggestions,
+                        "example": insights.suggest_passphrase()}), 400
+
+    password_hash, salt = core_security.hash_password(new)
+    db.set_password_hash(cid, password_hash, salt)
+    db.audit(actor=f"customer:{cid}", event_type="PASSWORD_CHANGE", subject_id=cid,
+             detail=f"Password changed via the secure form (strength {score}/100)")
+    notif.notify(cid, kind="password_change", severity="warn",
+                 subject="Your password was changed",
+                 body="Your SentinelBank password was just changed. If this wasn't you, "
+                      "freeze your card immediately and call us.")
+    return jsonify({"ok": True, "score": score, "verdict": verdict,
+                    "message": "Password updated. We've sent you a confirmation."})
+
+
+@bp.get("/api/account/passphrase")
+@auth.login_required
+def suggest_passphrase():
+    """A strong suggestion the customer can accept, so the easy path is the safe one."""
+    return jsonify({"passphrase": insights.suggest_passphrase()})
 
 
 @bp.post("/card/<action>")

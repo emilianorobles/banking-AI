@@ -1,144 +1,88 @@
-"""The Router agent -- classifies a customer message and hands off to a specialist.
+"""The Router agent -- classifies a message and narrows which tools can answer it.
 
 Same cost-conscious pattern as the fraud path: a cheap deterministic classifier handles
 the unambiguous majority, and only genuinely ambiguous messages pay for an LLM call.
 Consistency here is deliberate -- one architectural idea applied in two places is easier
 to defend than two different ones.
+
+The tables themselves live in `personas.py`, one set per role. This module holds only the
+mechanism, so a customer, an analyst and an admin are routed by the same code against
+different vocabularies rather than by three copies of the same loop.
 """
 
 from __future__ import annotations
 
-import re
-
-from .. import db, llm
+from .. import db
 from ..contracts import Intent
+from . import personas
+from .context import AgentContext
 
-# Ordered: the first pattern to match wins, so specific intents precede general ones.
-_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    (Intent.TRAVEL.value, re.compile(
-        r"\b(travel|travell?ing|trip|holiday|vacation|abroad|overseas|flying to|"
-        r"going to \w+ (next|this|on|for)|visit(ing)? \w+ (next|this)|business trip|"
-        r"budget for \w+|plan my budget)\b",
-        re.IGNORECASE)),
-    (Intent.FRAUD_REPORT.value, re.compile(
-        r"\b(fraud|scam|stolen|lost my card|unauthorised|unauthorized|didn'?t make|"
-        r"did not make|someone else|hacked|compromised|suspicious)\b", re.IGNORECASE)),
-    (Intent.DISPUTE.value, re.compile(
-        r"\b(dispute|chargeback|refund|wrong(ly)? charged|double charged|"
-        r"charged twice|incorrect charge)\b", re.IGNORECASE)),
-    (Intent.CARD_CONTROL.value, re.compile(
-        r"\b(freeze|block|lock|unfreeze|unblock|unlock|cancel) (my )?card\b",
-        re.IGNORECASE)),
-    # Security questions route to BALANCE, which reaches get_security_status. They sit
-    # above the transactions pattern because "is my account secure" contains "account"
-    # and would otherwise be answered with a list of charges.
-    (Intent.BALANCE.value, re.compile(
-        r"\b(security review|security score|security check|how secure|is my account "
-        r"(safe|secure)|account health|password|two.?factor|2fa)\b", re.IGNORECASE)),
-    (Intent.TRANSACTIONS.value, re.compile(
-        r"\b(transaction|payment|charge|spend|spent|purchase|activity|statement|"
-        r"recent|history|budget alert|spending alert|alert me)\b", re.IGNORECASE)),
-    (Intent.BALANCE.value, re.compile(
-        r"\b(balance|how much.*(have|left)|account summary|overview|my account)\b",
-        re.IGNORECASE)),
-]
-
-CLASSIFIER_SYSTEM = """You classify a retail banking customer's message into exactly one \
-intent. Reply with ONLY the intent word, nothing else.
-
-Valid intents:
-  balance        - account overview, card status, how much they have
-  transactions   - recent activity, charges, statements
-  dispute        - a specific charge they want reversed or investigated
-  fraud_report   - reporting fraud, theft, or a compromised card
-  travel         - telling us about upcoming or current travel
-  card_control   - freeze, unfreeze, block or unblock a card
-  general        - anything else"""
+# Back-compatible re-exports. Nothing outside this package reads them today, but they were
+# public and the customer tables have not changed, so they still mean what they meant.
+INTENT_TOOLS = personas.CUSTOMER_INTENT_TOOLS
+PRIMARY_TOOL = personas.CUSTOMER_PRIMARY_TOOL
+_PATTERNS = personas.CUSTOMER_PATTERNS
+CLASSIFIER_SYSTEM = personas.CUSTOMER_CLASSIFIER
 
 
-def classify(message: str, *, allow_llm: bool = True) -> tuple[str, str, bool]:
+def classify(message: str, *, allow_llm: bool = True,
+             role: str = "customer") -> tuple[str, str, bool]:
     """Return (intent, how_it_was_decided, used_llm).
 
     Deterministic first. If nothing matches and the message is substantive enough to be
-    worth a call, ask the model.
+    worth a call, ask the model -- and validate its answer against this persona's own
+    vocabulary, so a customer-shaped intent can never come back on a staff turn.
     """
+    persona = personas.for_role(role)
     text = (message or "").strip()
     if not text:
-        return Intent.GENERAL.value, "empty message", False
+        return persona.default_intent, "empty message", False
 
-    for intent, pattern in _PATTERNS:
+    for intent, pattern in persona.patterns:
         m = pattern.search(text)
         if m:
             return intent, f"matched '{m.group(0)}'", False
 
     if not allow_llm or len(text.split()) < 3:
-        return Intent.GENERAL.value, "no pattern matched", False
+        return persona.default_intent, "no pattern matched", False
 
     try:
-        reply, _ = llm.chat(CLASSIFIER_SYSTEM, text, agent="router")
+        # Lazily imported so this module stays import-safe with no network stack loaded.
+        from .. import llm
+        reply, _ = llm.chat(persona.classifier_system, text, agent="router")
         candidate = reply.strip().lower().split()[0].strip(".,:\"'")
-        valid = {i.value for i in Intent}
-        if candidate in valid:
+        if candidate in persona.intent_values:
             return candidate, "classified by model", True
     except Exception:
         pass
 
-    return Intent.GENERAL.value, "fallback", False
+    return persona.default_intent, "fallback", False
 
 
-# Which tools each intent is allowed to reach. Narrowing the surface per intent means a
-# message classified as "balance" cannot be talked into freezing a card.
-#
-# Read-only tools appear in several lists; anything that writes appears only where that
-# action is plausibly what the customer asked for. `report_card_lost` is reachable from
-# fraud and card control and nowhere else, which is the whole point of routing by intent
-# rather than handing the model the full registry.
-INTENT_TOOLS: dict[str, list[str]] = {
-    Intent.BALANCE.value: ["get_account_summary", "list_travel_notices",
-                           "get_security_status", "get_statement",
-                           "list_my_notifications"],
-    Intent.TRANSACTIONS.value: ["list_recent_transactions", "get_account_summary",
-                                "get_statement", "set_spending_alert",
-                                "list_my_notifications"],
-    Intent.DISPUTE.value: ["list_recent_transactions", "raise_dispute", "get_account_summary"],
-    Intent.FRAUD_REPORT.value: ["list_recent_transactions", "freeze_card", "raise_dispute",
-                                "search_fraud_precedents", "get_account_summary",
-                                "report_card_lost", "get_security_status"],
-    Intent.TRAVEL.value: ["set_travel_notice", "list_travel_notices", "get_account_summary",
-                          "plan_travel_budget"],
-    Intent.CARD_CONTROL.value: ["freeze_card", "unfreeze_card", "get_account_summary",
-                                "report_card_lost"],
-    Intent.GENERAL.value: ["get_account_summary", "list_recent_transactions",
-                           "list_travel_notices", "search_fraud_precedents",
-                           "get_security_status", "get_statement",
-                           "plan_travel_budget", "list_my_notifications"],
-}
+def allowed_tools(intent: str, role: str = "customer") -> list[str]:
+    return personas.for_role(role).allowed_tools(intent)
 
 
-def allowed_tools(intent: str) -> list[str]:
-    return INTENT_TOOLS.get(intent, INTENT_TOOLS[Intent.GENERAL.value])
+def primary_tool(intent: str, role: str = "customer") -> str:
+    """The tool to fall back on when the model talks about acting instead of acting.
+
+    Every entry in every persona's map is read-only, takes no arguments, and is scoped to
+    the caller -- so running one unprompted is always safe.
+    """
+    return personas.for_role(role).fallback_tool(intent)
 
 
-# The tool to fall back on when the model talks about acting instead of acting. Every
-# entry is read-only and scoped to the caller, so running one unprompted is always safe.
-PRIMARY_TOOL: dict[str, str] = {
-    Intent.BALANCE.value: "get_account_summary",
-    Intent.TRANSACTIONS.value: "list_recent_transactions",
-    Intent.DISPUTE.value: "list_recent_transactions",
-    Intent.FRAUD_REPORT.value: "list_recent_transactions",
-    Intent.TRAVEL.value: "list_travel_notices",
-    Intent.CARD_CONTROL.value: "get_account_summary",
-    Intent.GENERAL.value: "get_account_summary",
-}
+def route(message: str, ctx: AgentContext | str, *, allow_llm: bool = True) -> dict:
+    """Classify one message and return the tool surface it may reach.
 
+    Accepts a bare `customer_id` as well as a context, so the pre-role callers
+    (`core/record_demo.py`, `ui/customer.py`, the eval harness) keep working unchanged.
+    """
+    if isinstance(ctx, str):
+        ctx = AgentContext.for_customer(ctx)
 
-def primary_tool(intent: str) -> str:
-    return PRIMARY_TOOL.get(intent, "get_account_summary")
-
-
-def route(message: str, customer_id: str, *, allow_llm: bool = True) -> dict:
-    intent, why, used_llm = classify(message, allow_llm=allow_llm)
-    db.audit(actor=f"agent:router", event_type="ROUTE", subject_id=customer_id,
-             detail=f"intent={intent} ({why})", used_llm=used_llm)
+    intent, why, used_llm = classify(message, allow_llm=allow_llm, role=ctx.role)
+    db.audit(actor="agent:router", event_type="ROUTE", subject_id=ctx.customer_id,
+             detail=f"intent={intent} ({why})", used_llm=used_llm, role=ctx.role)
     return {"intent": intent, "why": why, "used_llm": used_llm,
-            "tools": allowed_tools(intent)}
+            "tools": allowed_tools(intent, ctx.role), "role": ctx.role}

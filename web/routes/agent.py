@@ -19,6 +19,7 @@ from flask import Blueprint, jsonify, request, session
 
 from core import db
 from core.agents import customer_agent
+from core.agents.context import AgentContext
 from core.contracts import ToolCall
 
 from .. import auth, mdlite
@@ -31,7 +32,38 @@ MAX_HISTORY = 12
 
 # Tools whose effects the page is showing, so the view needs to refresh after they run.
 REFRESH_AFTER = {"freeze_card", "unfreeze_card", "set_travel_notice", "raise_dispute",
-                 "report_card_lost", "set_spending_alert"}
+                 "report_card_lost", "set_spending_alert",
+                 "transfer_money", "buy_phone_credit", "pay_tax",
+                 "add_payee", "update_contact_details", "resolve_alert"}
+
+# Tools allowed to ask the browser to open something. Allowlisted by name for the same
+# reason `VISUALS` is: a generic passthrough of `result` would put account detail on the
+# wire, which `_call_to_dict` exists to prevent.
+UI_ACTIONS = {"start_password_change"}
+
+
+def _ctx() -> AgentContext:
+    """Identity for this turn, from the session and nowhere else.
+
+    The persona is derived server-side from the signed cookie. If the browser could name
+    it, it would be a role-escalation channel rather than a preference.
+    """
+    user = auth.current_user() or {}
+    return AgentContext(
+        customer_id=auth.active_customer_id(),
+        role=user.get("role", "customer"),
+        username=user.get("username", ""),
+    )
+
+
+def _ui_action(reply) -> str:
+    """The one thing a tool result may ask the browser to do."""
+    for call in reply.tool_calls:
+        if call.tool_name in UI_ACTIONS and isinstance(call.result, dict):
+            action = call.result.get("ui_action")
+            if action:
+                return str(action)
+    return ""
 
 
 def _call_to_dict(c: ToolCall) -> dict:
@@ -183,7 +215,8 @@ def visuals_for(call: ToolCall) -> list[dict]:
 @bp.post("/chat")
 @auth.login_required
 def chat():
-    cid = auth.active_customer_id()
+    ctx = _ctx()
+    cid = ctx.customer_id
     payload = request.get_json(silent=True) or {}
     message = str(payload.get("message") or "").strip()
     approve_tool = payload.get("approve_tool")
@@ -195,7 +228,7 @@ def chat():
     if approve_tool:
         if not pending or pending.get("tool_name") != approve_tool:
             # Either the session lost the proposal or the browser invented one.
-            db.audit(actor=f"customer:{cid}", event_type="GUARDRAIL", subject_id=cid,
+            db.audit(actor=ctx.actor, event_type="GUARDRAIL", subject_id=cid,
                      detail=f"Approval for '{approve_tool}' with no matching proposal")
             return jsonify({
                 "text": "That confirmation has expired. Ask me again and I'll re-propose it.",
@@ -205,7 +238,7 @@ def chat():
         # Execute the stored proposal — the browser's arguments are not consulted.
         call = ToolCall(pending["tool_name"], pending.get("arguments") or {},
                         requires_approval=True)
-        reply = customer_agent.respond("", cid, history=history, pending_approval=call)
+        reply = customer_agent.respond("", ctx, history=history, pending_approval=call)
         session[PENDING_KEY] = None
         refresh = pending["tool_name"] in REFRESH_AFTER
 
@@ -214,7 +247,7 @@ def chat():
         if not message:
             return jsonify({"error": "Say something first."}), 400
 
-        reply = customer_agent.respond(message, cid, history=history)
+        reply = customer_agent.respond(message, ctx, history=history)
         history = (history + [{"role": "user", "content": message}])[-MAX_HISTORY:]
 
         proposal = next((c for c in reply.tool_calls
@@ -249,6 +282,7 @@ def chat():
         "guardrail_notes": reply.guardrail_notes,
         "latency_ms": reply.latency_ms,
         "refresh": refresh,
+        "ui_action": _ui_action(reply),
     })
 
 

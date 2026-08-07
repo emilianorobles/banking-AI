@@ -69,11 +69,26 @@ def create_app() -> Flask:
         if user and user.get("role") in ("analyst", "admin"):
             customers = db.list_customers(limit=200)
 
+        # Which assistant this user gets. Read from `core.agents.personas`, the same
+        # module that supplies the prompt and the routing tables -- so the button a
+        # judge presses and the prompt that answers it cannot drift apart, and
+        # `core/record_demo.py` records from the same strings the template renders.
+        from core.agents import personas
+        persona = personas.for_role(user.get("role") if user else None)
+
         return {
             "user": user,
             "sb_health": health,
             "active_customer_id": auth_module.active_customer_id() if user else None,
             "all_customers": customers,
+            "chat_persona": {
+                "role": persona.role,
+                "title": persona.title,
+                "status": persona.status,
+                "greeting": persona.greeting,
+                "placeholder": persona.placeholder,
+                "quick_actions": personas.quick_actions(persona.role),
+            },
             # Injected into the page as JSON so the browser reads the same table Python
             # does. See core/money.py for why this is not a second copy in a .js file.
             "currency_symbols": money_mod.SYMBOLS,

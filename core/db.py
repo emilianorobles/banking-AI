@@ -123,6 +123,49 @@ CREATE TABLE IF NOT EXISTS spending_alerts (
     created_at TEXT, active INTEGER DEFAULT 1
 );
 
+-- Saved beneficiaries. Deliberately a table rather than columns on `customers`: a
+-- customer has many payees, and `init_db` runs CREATE TABLE IF NOT EXISTS, which will
+-- happily leave an existing table missing a newly declared column.
+--
+-- `transfer_count` is what makes "first-time beneficiary" answerable. It is the single
+-- strongest signal in authorised-push-payment fraud and the reason the money tools can
+-- tag a first transfer as a higher-risk merchant category.
+CREATE TABLE IF NOT EXISTS payees (
+    payee_id TEXT PRIMARY KEY,
+    customer_id TEXT, name TEXT,
+    account_number TEXT, kind TEXT,              -- 'internal' | 'external'
+    internal_customer_id TEXT,
+    created_at TEXT, last_used_at TEXT,
+    transfer_count INTEGER DEFAULT 0, active INTEGER DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_payee_customer ON payees(customer_id);
+
+-- Money the customer has asked to move. Separate from `transactions` because a
+-- transaction is a thing that HAPPENED and a transfer is a thing that was REQUESTED --
+-- and between the two sits the fraud pipeline, which may hold it. Without this row there
+-- is nowhere to record "screened, held, not yet settled", and a challenged transfer would
+-- either move the money too early or lose it entirely.
+CREATE TABLE IF NOT EXISTS transfers (
+    transfer_id TEXT PRIMARY KEY,
+    txn_id TEXT, customer_id TEXT, payee_id TEXT,
+    amount REAL, currency TEXT,
+    kind TEXT,                                   -- 'transfer' | 'topup' | 'tax'
+    reference TEXT, destination TEXT,
+    status TEXT,                                 -- 'pending' | 'settled' | 'blocked' | 'cancelled'
+    risk_score INTEGER, action TEXT,
+    created_at TEXT, settled_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_transfer_txn ON transfers(txn_id);
+CREATE INDEX IF NOT EXISTS idx_transfer_customer ON transfers(customer_id, created_at);
+
+-- Password material only. Nothing here is ever read into a prompt, a chat history or the
+-- offline response cache, and the plaintext never reaches this module at all -- callers
+-- hand over an already-derived hash.
+CREATE TABLE IF NOT EXISTS credentials (
+    customer_id TEXT PRIMARY KEY,
+    password_hash TEXT, salt TEXT, password_changed_at TEXT
+);
+
 -- Counts transactions that never needed an LLM call. Powers the cost meter.
 CREATE TABLE IF NOT EXISTS counters (
     name TEXT PRIMARY KEY,
@@ -690,6 +733,202 @@ def list_spending_alerts(customer_id: str) -> list[dict[str, Any]]:
             "SELECT * FROM spending_alerts WHERE customer_id=? AND active=1 "
             "ORDER BY created_at DESC", (customer_id,)).fetchall()
     return [dict(r) for r in rows]
+
+
+# --------------------------------------------------------------------------- #
+# Account position and contact details
+# --------------------------------------------------------------------------- #
+#
+# Targeted UPDATEs, not a re-upsert. `upsert_customers` writes all fourteen columns
+# positionally, so round-tripping a Customer through it to change one field is a way to
+# silently clobber the other thirteen if the dataclass and the column order ever drift.
+# `set_card_frozen` established this pattern; these follow it.
+
+def adjust_balance(customer_id: str, delta: float) -> float:
+    """Move a customer's balance by `delta` and return the new figure.
+
+    Read-modify-write inside one connection so two concurrent settlements cannot both
+    read the same starting balance. The ingestion endpoint and the web app are separate
+    writers -- that is why the database is in WAL mode in the first place.
+    """
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT balance FROM customers WHERE customer_id=?", (customer_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"No such customer {customer_id!r}")
+        updated = round(float(row["balance"] or 0.0) + float(delta), 2)
+        conn.execute("UPDATE customers SET balance=? WHERE customer_id=?",
+                     (updated, customer_id))
+    return updated
+
+
+def update_contact(customer_id: str, email: str | None = None,
+                   phone: str | None = None) -> dict[str, str]:
+    """Update email and/or phone. Returns what changed, old and new.
+
+    The caller needs the OLD values: a contact-detail change is the first move in an
+    account takeover, so the notification has to reach the address being replaced as
+    well as the one replacing it.
+    """
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT email, phone FROM customers WHERE customer_id=?", (customer_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"No such customer {customer_id!r}")
+        changed: dict[str, str] = {}
+        if email and email != row["email"]:
+            conn.execute("UPDATE customers SET email=? WHERE customer_id=?",
+                         (email, customer_id))
+            changed["email"] = email
+            changed["previous_email"] = row["email"] or ""
+        if phone and phone != row["phone"]:
+            conn.execute("UPDATE customers SET phone=? WHERE customer_id=?",
+                         (phone, customer_id))
+            changed["phone"] = phone
+            changed["previous_phone"] = row["phone"] or ""
+    return changed
+
+
+def customer_by_account_number(account_number: str) -> Customer | None:
+    """Resolve an account number to a customer, so a transfer can be internal."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM customers WHERE account_number=?",
+            (str(account_number).strip(),)).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    d["card_frozen"] = bool(d["card_frozen"])
+    return Customer(**d)
+
+
+# --------------------------------------------------------------------------- #
+# Payees
+# --------------------------------------------------------------------------- #
+
+def save_payee(payee_id: str, customer_id: str, name: str, account_number: str,
+               kind: str = "external", internal_customer_id: str | None = None,
+               transfer_count: int = 0, last_used_at: str | None = None) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO payees VALUES (?,?,?,?,?,?,?,?,?,1)",
+            (payee_id, customer_id, name, account_number, kind, internal_customer_id,
+             now_iso(), last_used_at, int(transfer_count)),
+        )
+
+
+def list_payees(customer_id: str) -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM payees WHERE customer_id=? AND active=1 "
+            "ORDER BY transfer_count DESC, name", (customer_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_payee(payee_id: str) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM payees WHERE payee_id=?", (payee_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def find_payee(customer_id: str, needle: str) -> dict[str, Any] | None:
+    """Match a saved payee by name or account number, scoped to one customer.
+
+    Case-insensitive, and a prefix match on the name, because the customer says "send
+    2000 to Priya" and the payee is saved as "Priya Sharma". Exact account-number match
+    wins over any name match -- a digit string is unambiguous and a name is not.
+    """
+    text = str(needle or "").strip().lower()
+    if not text:
+        return None
+    rows = list_payees(customer_id)
+    for r in rows:
+        if str(r.get("account_number", "")).lower() == text:
+            return r
+    for r in rows:
+        if str(r.get("name", "")).lower() == text:
+            return r
+    matches = [r for r in rows if str(r.get("name", "")).lower().startswith(text)]
+    if len(matches) == 1:
+        return matches[0]
+    # An ambiguous first name must not silently pick one. Returning None makes the tool
+    # ask, which is the correct behaviour when the alternative is paying a stranger.
+    return None
+
+
+def mark_payee_used(payee_id: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE payees SET transfer_count=transfer_count+1, last_used_at=? "
+            "WHERE payee_id=?", (now_iso(), payee_id))
+
+
+# --------------------------------------------------------------------------- #
+# Transfers
+# --------------------------------------------------------------------------- #
+#
+# A transaction is a thing that HAPPENED; a transfer is a thing that was REQUESTED. The
+# fraud pipeline sits between the two and may hold one, so the request needs its own row
+# to carry "screened, held, not settled" -- otherwise a challenged transfer either moves
+# the money too early or is lost entirely when the customer confirms it later.
+
+def save_transfer(transfer_id: str, txn_id: str, customer_id: str,
+                  payee_id: str | None, amount: float, currency: str, kind: str,
+                  reference: str, destination: str, status: str,
+                  risk_score: int = 0, action: str = "") -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO transfers VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (transfer_id, txn_id, customer_id, payee_id, round(float(amount), 2),
+             currency, kind, reference, destination, status, int(risk_score), action,
+             now_iso(), None),
+        )
+
+
+def get_transfer_for_txn(txn_id: str) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM transfers WHERE txn_id=?", (txn_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_transfers(customer_id: str, limit: int = 25) -> list[dict[str, Any]]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM transfers WHERE customer_id=? ORDER BY created_at DESC LIMIT ?",
+            (customer_id, limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_transfer_status(transfer_id: str, status: str,
+                        settled: bool = False) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE transfers SET status=?, settled_at=? WHERE transfer_id=?",
+            (status, now_iso() if settled else None, transfer_id))
+
+
+# --------------------------------------------------------------------------- #
+# Credentials
+# --------------------------------------------------------------------------- #
+#
+# Hash and salt only. The plaintext never reaches this module -- callers derive the hash
+# and hand it over, so there is no code path here that could log, cache or persist a
+# password by accident.
+
+def set_password_hash(customer_id: str, password_hash: str, salt: str) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO credentials VALUES (?,?,?,?)",
+            (customer_id, password_hash, salt, now_iso()))
+
+
+def get_credentials(customer_id: str) -> dict[str, Any] | None:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM credentials WHERE customer_id=?", (customer_id,)).fetchone()
+    return dict(row) if row else None
 
 
 def bump(counter: str, by: int = 1) -> None:

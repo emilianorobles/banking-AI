@@ -1,13 +1,22 @@
 {# The agent, available on every page. It is not a help bot: it holds tools that move real
    state, so anything irreversible comes back as a proposal with a Confirm button rather
-   than as a done deal. #}
+   than as a done deal.
+
+   Everything role-dependent -- title, status line, greeting, quick actions, placeholder --
+   comes from `chat_persona`, injected by the context processor from
+   `core/agents/personas.py`. That is the same module the system prompt and the routing
+   tables live in, so a button and the prompt that answers it cannot drift apart, and
+   `core/record_demo.py` records the same strings this template renders. The script below
+   is persona-agnostic and is not duplicated per role. #}
 <button class="chat-fab" id="chat-fab" type="button" aria-label="Open assistant">💬</button>
 
-<section class="chat-panel" id="chat-panel" aria-label="SentinelBank assistant">
+<section class="chat-panel" id="chat-panel"
+         data-idle-status="{{ chat_persona.status }}"
+         aria-label="{{ chat_persona.title }}">
   <header class="chat-head">
     <div>
-      <div style="font-weight:800">SentinelBank Assistant</div>
-      <div class="tiny dim" id="chat-status">Can act on your account · every action is logged</div>
+      <div style="font-weight:800">{{ chat_persona.title }}</div>
+      <div class="tiny dim" id="chat-status">{{ chat_persona.status }}</div>
     </div>
     <div class="row nowrap">
       {# Wired by static/js/voice.js, which disables them itself when the browser has no
@@ -20,26 +29,21 @@
 
   <div class="chat-log" id="chat-log">
     <div class="msg bot">
-      Hello. I can check your balance and recent activity, freeze or unfreeze your card,
-      raise a dispute, file a travel notice, plan a travel budget, pull a statement, or
-      run a security review.<br><br>
-      <span class="dim small">Anything that changes your account asks you to confirm first.</span>
+      {{ chat_persona.greeting }}<br><br>
+      <span class="dim small">Anything that changes state asks you to confirm first.</span>
     </div>
   </div>
 
   <div class="chat-quick">
-    <button class="btn btn-sm" data-q="How is my account looking?">Account health</button>
-    <button class="btn btn-sm" data-q="Run a security review on my account">Security review</button>
-    <button class="btn btn-sm" data-q="Show my recent transactions">Recent activity</button>
-    <button class="btn btn-sm" data-q="I'm going to Spain for 8 days, plan my budget">Travel budget</button>
-    <button class="btn btn-sm" data-q="Send me my statement">Statement</button>
-    <button class="btn btn-sm" data-q="Freeze my card, I think it's been stolen">Block card</button>
+    {% for a in chat_persona.quick_actions %}
+    <button class="btn btn-sm" data-q="{{ a.q }}">{{ a.label }}</button>
+    {% endfor %}
   </div>
 
   <div class="tiny dim hidden" id="chat-voice-note" style="padding:0 var(--s-3) .4rem"></div>
 
   <form class="chat-foot" id="chat-form">
-    <input type="text" id="chat-input" placeholder="Ask, or tell me what to do…"
+    <input type="text" id="chat-input" placeholder="{{ chat_persona.placeholder }}"
            autocomplete="off" aria-label="Message">
     <button class="btn btn-sm btn-ghost" id="chat-mic" type="button"
             aria-pressed="false" aria-label="Dictate" title="Dictate">🎤</button>
@@ -57,6 +61,10 @@
   const send  = document.getElementById("chat-send");
   const status= document.getElementById("chat-status");
   if (!fab) return;
+
+  /* The idle status line is a persona string, read from the panel rather than written
+     twice in here. */
+  const IDLE = panel.dataset.idleStatus || "Every action is logged";
 
   let busy = false;
 
@@ -177,10 +185,19 @@
       notes(data.guardrail_notes);
 
       emit("reply", data);
+
+      /* A tool may ask the browser to open something. Exactly one does today: the
+         password form, which exists so the password is typed into a form that posts
+         straight to the account route -- never into the chat box, where it would land
+         in the prompt, the history and the recorded cache. */
+      if (data.ui_action === "password_form" && window.SBAccount) {
+        SBAccount.openPasswordForm();
+      }
+
       if (data.refresh) setTimeout(() => location.reload(), 1400);
       status.textContent = data.latency_ms
         ? `Answered in ${(data.latency_ms / 1000).toFixed(1)}s · every action is logged`
-        : "Can act on your account · every action is logged";
+        : IDLE;
     } catch (err) {
       t.remove();
       bubble("bot", `<span class="pill pill-danger">Error</span> ${SB.escapeHtml(err.message)}`);

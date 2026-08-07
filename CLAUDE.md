@@ -106,11 +106,15 @@ Nobody edits another person's files. This is what keeps 5 AI-assisted sessions f
 
 | Owner | Files |
 |---|---|
-| **A** Integrator | `core/contracts.py` `config.py` `db.py` `llm.py` `security.py` `pipeline.py` `notifications.py` · `api/main.py` · `web/__init__.py` `web/auth.py` · **only A merges to main** |
-| **B** Fraud+RAG | `core/rules.py` `rag.py` `travel.py` `agents/fraud_analyst.py` `evaluation.py` |
-| **C** Customer portal | `web/routes/customer.py` `agent.py` `drill.py` · `web/templates/customer/*` · `core/agents/router.py` `customer_agent.py` `tools.py` · `core/insights.py` |
-| **D** Admin portal | `web/routes/admin.py` `demo.py` `notifications.py` · `web/templates/admin/*` |
+| **A** Integrator | `core/contracts.py` `config.py` `db.py` `llm.py` `security.py` `pipeline.py` `notifications.py` `money_ops.py` · `api/main.py` · `web/__init__.py` `web/auth.py` · **only A merges to main** |
+| **B** Fraud+RAG | `core/rules.py` `rag.py` `travel.py` `agents/fraud_analyst.py` `evaluation.py` `casework.py` |
+| **C** Customer portal | `web/routes/customer.py` `agent.py` `drill.py` · `web/templates/customer/*` · `core/agents/router.py` `customer_agent.py` `tools.py` `personas.py` `context.py` · `core/insights.py` |
+| **D** Admin portal | `web/routes/admin.py` `demo.py` `notifications.py` · `web/templates/admin/*` · `core/agents/staff_tools.py` |
 | **E** Data/docs/deck | `data/*` `docs/*` · slides · demo script · manual QA |
+
+`core/agents/personas.py` is shared ground in practice: it holds the prompts (C), the
+staff routing vocabulary (D) and the strings `core/record_demo.py` records (E). Tell the
+others when you touch it — a quick-action edit there means a re-record.
 
 Shared and owned by whoever touches them last, but tell the others: `web/static/css/glass.css`,
 `web/static/js/*.js`, `web/templates/base.html`, `web/templates/partials/*`. A change to any
@@ -190,6 +194,21 @@ blocked on an API key.** The whole app runs today with `DEMO_MODE=off` (rules on
       and `/static/_voice_check.html` diagnoses it (bug 15)
 - [x] Pitch material — `docs/VALUE_PROPOSITION.md`, `/ops/business-case`, talk track
 - [x] Bounded failover: `PRIMARY_TIMEOUT` (12s) separate from the fallback's budget
+- [x] **Role-aware assistant** — one loop, three personas (`core/agents/personas.py`).
+      Customer / fraud analyst / operations admin, each with its own prompt, routing
+      vocabulary, tool scope and widget strings. `roles` on `ToolSpec`, enforced in
+      `tools.execute`. See "The role-aware assistant" below
+- [x] **Post-login fraud prompt** — a pending alert opens a modal the moment the customer
+      signs in, answerable in place, posting to the same route the Alerts page uses
+- [x] **Money movement** — transfers, phone top-ups and tax payments, every one screened
+      by `pipeline.score_transaction` before it settles. Payees, held transfers, and a
+      settle-on-human-confirmation loop. See "Money movement" below
+- [x] Contact-detail updates (notifying the *old* address too) and password change through
+      a secure form the model never sees
+- [x] `core/casework.py` — alert resolution extracted so the ops route and the analyst's
+      `resolve_alert` tool share one implementation of the learning loop
+- [x] `record_demo` now records **and verifies** chat beats for every persona — that gap
+      meant the chat cache had never been proven to replay
 - [ ] **← NEXT: slide deck** (docs/ARCHITECTURE.md headings map to slides)
 - [ ] Demo rehearsed 3× under 10:00, screen recording captured
 - [ ] Re-run `python -m core.record_demo` after any prompt/scenario change
@@ -222,6 +241,166 @@ it and `renderDrill()` draws whatever the endpoint returns.
 **Customer-scoped drill kinds read `auth.active_customer_id()` from the session, never the
 key in the URL.** Passing someone else's id returns your own data. `alert` and `cost` are
 staff-only and audit the attempt.
+
+## The role-aware assistant
+
+The chat widget is on every page for every role, and it used to be the *customer*
+assistant for all of them — scoped to whichever customer the header switcher had selected,
+and writing every audit row as `customer:CUST-0001` even when an admin was the one acting.
+That is a governance defect, not a UX one: the audit log is a scored rubric item and it was
+recording the wrong actor for exactly the actions where the actor matters.
+
+Now there are three personas over **one loop**.
+
+| | Customer | Fraud analyst | Operations admin |
+|---|---|---|---|
+| Sees | their own account | the queue, any customer, precedents | that plus cost, health, audit |
+| Can write | card, disputes, travel, money, contact, password | resolve an alert (gated) | same as analyst |
+| Tools | 21 | 13 | 16 |
+
+### One loop, three declarations
+
+`core/agents/personas.py` is the single declaration site: system prompt, intent patterns,
+per-intent tool allowlist, `primary_tool` fallback map, finalise voice, injection refusal,
+cache namespace — **and the widget strings** (title, greeting, quick actions, placeholder).
+
+Prompt and UI live together on purpose. The stateful-demo checklist warns that a quick
+action's prompt must match `core/record_demo.py` verbatim or the button is dead offline —
+and until now those strings were hand-copied between the template and the recorder, which
+is precisely the arrangement that warning describes. The template renders them and the
+recorder reads them, from one place. That class of bug is now unreachable.
+
+`customer_agent.respond()` keeps its name and its ~200-line loop — stall detection, the
+`_normalise` envelope repair, the LLM-unavailable degradation, the approval pause. Every
+one of those is a fix for a bug that reached a browser, and a second copy would start
+correct and diverge on the first fix that landed in only one of them. Only four things
+change source per persona: prompt, allowed tools, audit actor, finalise voice.
+
+### Role is enforced below the prompt
+
+`ToolSpec.roles` is a **required** keyword on `@tool` with no default. Any default is
+wrong for half the registry, and the direction of the wrong answer matters: a forgotten
+`roles=` that defaulted permissive exposes an ops tool to customers. Same reasoning as
+`rules.selfcheck()` — make the invisible mistake impossible at declaration time.
+
+Two independent layers, and only the second is load-bearing:
+
+1. The router **offers** a role the tools its persona declares, so the model does not waste
+   a step proposing the impossible.
+2. `tools.execute` **enforces** it regardless of what the model asked for, audits the
+   attempt, and returns an error `ToolCall`. It sits inside the single funnel every call
+   passes through — including the approval-replay path, so a proposal stored under one
+   role cannot execute after the role changed.
+
+Verified at the function, below the prompt: an analyst calling `freeze_card` or
+`transfer_money`, and a customer calling `cost_summary` or `list_open_alerts`, are all
+blocked with a `GUARDRAIL` row.
+
+`_RESERVED_ARGS` grew from `{customer_id}` to also strip `ctx`, `role`, `username`,
+`actor` — a prompt-injected `{"role": "admin"}` reaching a handler is the whole ballgame.
+
+**Consequence, and it is load-bearing:** a staff tool that queries another account names
+its parameter `target_customer_id`, never `customer_id`, or the strip silently deletes it
+and the handler falls back to its default. For a customer tool the id is an *authority
+claim* and must be server-injected; for a staff tool it is a *query argument*. Same word,
+two meanings, so they get two names.
+
+### Staff intents do not touch the frozen `Intent` enum
+
+`Intent` is customer-shaped and frozen. Extending it would also *degrade the customer
+router*: `classify` validates the model's answer against the enum, so adding `triage` lets
+the customer classifier emit an intent with no `INTENT_TOOLS` entry, silently falling back
+to GENERAL. And no contract change is needed anyway — `AgentReply.intent` is already
+`str`. Staff intents are plain strings in `personas.py`.
+
+### The cache: namespaced by prefix, never hashed
+
+`_chat_cache_key(message, step, prefix)`. Customer keeps `chat-`, so **every recorded key
+is byte-identical**; staff share `chat-staff-`. Hashing the role in would have moved all
+twelve recorded customer beats and orphaned the demo — the exact failure bug 12 describes,
+self-inflicted. Separation is still necessary: "show recent transactions" normalises
+identically whoever types it, and a shared key would replay a customer tool choice into
+the staff persona where it is out of scope.
+
+Role passes the bug-12 test that intent failed: it comes from the signed session cookie,
+so it is computable with the network dead and identical online and offline.
+
+**Analyst and admin deliberately share one namespace**, so an admin pressing an analyst
+quick action hits the recorded beat. That is only sound because **admin's tool scope is a
+strict superset of the analyst's**. Keep it that way.
+
+**Recorded staff beats must be ID-free.** The key is the normalised question, so a beat
+phrased *"Why did ALERT-4f21a0 score 92?"* is keyed to an ID the next reseed destroys and
+is guaranteed to miss on any other machine. ID-bearing questions are answered live, or
+offline by the `primary_tool` fallback — which is what that fallback is for.
+
+## Money movement
+
+Transfers, phone top-ups and tax payments. The ordering is the whole point:
+
+```
+build Transaction -> pipeline.score_transaction(persist=True) -> settle | hold | block
+```
+
+The assistant cannot move money the bank's own fraud engine has not passed. Nothing is
+re-implemented — a transfer is screened by exactly the machinery a card transaction is,
+the same `score_transaction` the switch calls through `POST /api/transactions`.
+
+| Decision | What happens |
+|---|---|
+| `ALLOW` | debit sender, credit an internal payee, mark payee used, transfer `settled` |
+| `CHALLENGE` | **money does not move**, transfer `pending`, alert raised |
+| `FREEZE_AND_ESCALATE` / `QUARANTINE` | transfer `blocked`, card frozen, analyst queue |
+
+**First-time beneficiary is expressed as a merchant category, not a new rule.** The
+taxonomy already declares `wire_transfer` and `prepaid_reload` high-risk, and a first
+payment to a brand-new payee is what that category is for. A new rule would mean
+`RULE_META`/`EMITS`/`selfcheck` churn and a new number in the published eval figures, for
+a signal the engine can already express. Measured: ₹2,000 to a known payee scores 0 and
+settles; ₹250,000 to a payee added a moment earlier scores 60, is held, and the money
+stays put.
+
+**A held transfer settles when a human clears it** — the customer answering "yes, that was
+me" on their own alert, or an analyst clearing it as a false positive. Both call
+`money_ops.settle_if_held`. That is the loop closing: the engine holds, a person decides,
+the money moves, and the same action embeds the case into FAISS. Double-settle is a no-op,
+because the status is checked first.
+
+New tables — `payees`, `transfers`, `credentials` — rather than columns on `customers`.
+`init_db` runs `CREATE TABLE IF NOT EXISTS`, which will **not** add a column to an existing
+table, and `upsert_customers` writes all fourteen columns positionally. New tables dodge
+both, and `contracts.py` stays frozen. `reset_db()` enumerates from `sqlite_master`, so all
+three are covered by Reset Demo with no edit.
+
+### The password is never a tool argument
+
+`start_password_change` returns `{"ui_action": "password_form"}` and changes nothing. The
+browser opens a form that posts to a plain Flask route. So the plaintext never enters a
+prompt, the conversation history, the offline response cache, or an audit row — there is no
+code path by which it could. Verified: after a successful change the new password appears
+in zero audit rows, zero telemetry rows, the response cache and the `.eml` outbox.
+
+Hashing is PBKDF2-HMAC-SHA256, 240k iterations, per-customer salt, in `core/security.py`
+rather than `db.py` so persistence never handles a plaintext at all.
+
+## The post-login fraud prompt
+
+A pending alert used to reach the customer as a 6-second toast they had to already be
+looking at, plus a page they had to navigate to. If the bank has frozen your card, that
+should be the first thing you see.
+
+`GET /api/alerts/pending` returns PENDING alerts for the session's customer (never a key
+from the URL — the same IDOR rule as the drill API), each with the transaction, the
+plain-English rule hits from `RULE_META`, and any held transfer. Reading it **pops** the
+session flag, so the prompt fires once per sign-in rather than on every navigation: a
+customer who dismisses it can still reach every alert on the Alerts page, and nagging them
+on each page load trains them to click it away.
+
+Customers only. Staff land on `/ops/overview`, which *is* the queue.
+
+Both answers post to `POST /alerts/<id>/respond` — the route the Alerts page already uses,
+which verifies ownership, freezes on fraud, writes the learned case and settles or cancels
+any held transfer. No decision logic is duplicated in the browser.
 
 ## Provider resilience — what happens when TCS goes down
 
@@ -539,6 +718,99 @@ Assertion 5 in the harness reports all of these, so brightening a stop back fail
     a bare `Chromium` build "Chrome, supported", when the brand *without* `Google Chrome`
     beside it is precisely the no-API-key case that always fails.
 
+### Eight the role-aware build caught
+
+16. **`_notify_customer` would have alerted the wrong customer.** `tools.execute` fires the
+    notification against the *session's* customer. That was fine while every write tool
+    acted on the caller's own account — and wrong the moment `resolve_alert` existed. An
+    analyst viewing CUST-0001 resolving an alert belonging to CUST-0042 would have raised
+    a fraud notification, a notification-centre row and a real `.eml` **on CUST-0001's
+    account**. A privacy incident, not a cosmetic bug. The subject now comes from
+    `result["notify_customer_id"]` when the result names one; customer tools never do, so
+    their behaviour is unchanged. Verified: the resolution notified CUST-0139, and
+    CUST-0001 got nothing.
+
+17. **A view function shadowed a module import.** `web/routes/customer.py` defines
+    `def security():` for the `/security` page, which shadows `from core import security`
+    at every call site below it — so the new password route raised
+    `AttributeError: 'function' object has no attribute 'verify_password'`. Renaming the
+    view would break `url_for('customer.security')` in the templates, so the *import* is
+    aliased instead. **Check for a same-named view before importing a core module into a
+    routes file.**
+
+18. **The password form posted JSON to a route reading `request.form`.** `SB.postJSON`
+    sends a JSON body; `request.form` is empty for one, so every field read as `""` and
+    the route rejected the correct current password with "that isn't right". Silent and
+    total: no error, just a control that never works. It now reads
+    `request.get_json(silent=True) or request.form`, which also makes the form work
+    without JavaScript.
+
+19. **"Resolve this alert, the customer confirmed it was genuine" could not resolve it.**
+    The word *customer* matched the analyst's `customer_lookup` pattern before `triage`,
+    so `resolve_alert` was out of scope and the assistant said the resolution function was
+    unavailable — a confident, wrong refusal. `triage` now sits above `customer_lookup`
+    and `precedent`: **an instruction to act on an alert outranks a mention of who it
+    belongs to.** `resolve_alert` was also added to the analyst's `general` allowlist,
+    because routing is a narrowing convenience and the approval gate plus the role check
+    are the actual boundary.
+
+20. **A pattern that missed its own button.** `\bpayee\b` does not match "payees", and
+    *"Who are my saved payees?"* is a quick-action button — so the button routed to
+    `general`. Likewise `seen (this|that) before` does not match its own recorded beat
+    *"Have we seen this pattern before?"*. **Route every quick action through `classify`
+    as a test; a pattern that cannot match the button it was written for is dead on
+    stage.**
+
+21. **The recorder's own verification had never checked the chat beats.** `verify()`
+    re-ran the pipeline scenarios only, so the twelve recorded chat responses — the entire
+    reason the chat cache exists — had never been proven to replay. `_verify_chat` now
+    replays every beat for every persona. The first predicate was too lenient
+    (`llm_unavailable` **and** no tool ran), which quietly passed a beat that had degraded
+    to `primary_tool`: the reply looks fine because it is real account data, but the
+    recorded decision never replayed. **For a beat that is on a button, degrading is
+    failing** — any `llm_unavailable` note is now a failure.
+
+22. **The injection guard blocked the product's main verb.** `detect_injection`'s
+    `exfiltration` rule was `(send|post|email|forward|upload|exfiltrate)` within 30
+    characters of `to |http|@`. That bare `to ` meant **"Send 180000 to Rohan Das" was
+    refused as a prompt-injection attempt** — with the canned "I can't act on instructions
+    that try to change how I work", which reads as a considered decision rather than a
+    bug. Every transfer phrased the way people actually phrase transfers was dead.
+
+    Exfiltration is *data* leaving to somewhere it should not go; it is not money going to
+    a person. The rule is now two patterns under the same category: a verb aimed at an
+    external **destination** (URL or email address), or a verb aimed at a sensitive
+    **object** (system prompt, api key, credentials, chat history, customer records).
+    Verified both directions — 10 legitimate payment phrasings pass, and 11 real attacks
+    including both seeded demo payloads are still caught.
+
+    **A guardrail that fires on the product's most common sentence is worse than no
+    guardrail.** Test a detector against the legitimate traffic it will actually see, not
+    only against the attacks it was written for.
+
+23. **The agent checked the payee list instead of paying.** Given "Send 180000 to Rohan
+    Das" it called `list_payees` and printed a table — correct-looking, and the money did
+    not move. The loop returns after one successful tool call, so that consumed the turn.
+    `transfer_money` already resolves the name itself, reports what it cannot find, and
+    pauses for confirmation, so the check bought nothing and cost the customer a turn. The
+    prompt now says so explicitly. **Worth knowing because it is invisible in testing:
+    every individual step looked right.**
+
+### Never record while anything else is running
+
+`llm._save_to_cache` does a read-modify-write of the whole `data/cached_responses.json`.
+Two processes making live calls at once is a lost-update race, and the loser is whatever
+was recorded first. Observed: a `record_demo` run that finished with 434 responses and a
+clean PASS was down to 396 an hour later, with every staff beat gone — because the
+evaluation harness and two running app instances had each rewritten the file from their
+own in-memory copy.
+
+It fails in the worst possible way: silently, and only offline, where nobody can debug it.
+
+**Before recording: stop the web app, stop any eval run, and re-run `--verify` afterwards.**
+The verify step is what catches it — which is the other reason the chat beats had to be
+added to it.
+
 ### Stateful demo traps (all three are pre-flight checklist items)
 
 The **Run pre-flight check** button on Demo control fixes the first two and reports what it
@@ -549,9 +821,13 @@ changed. Press it between rehearsals.
 - A reseed **wipes the travel notice**. Without it the Spain beat isn't testing suppression
   at all.
 - **Re-run `python -m core.record_demo` after touching a prompt, a tool, or a chat quick
-  action.** The chat beats it records must match `chat_widget.html` verbatim — a quick-action
-  button whose prompt was never recorded is dead offline, and it will be the button you
-  press on stage.
+  action** — with the web app and any eval run **stopped** (see "Never record while
+  anything else is running"). The quick-action prompts now come from
+  `core/agents/personas.py` and the recorder reads the same declaration, so they cannot
+  drift out of step; what still needs a re-record is any *change* to one.
+- **Injecting fraud can also leave a held transfer.** `money_ops` records a `pending`
+  transfer behind a CHALLENGE, and the pre-flight unfreeze does not settle it. Harmless,
+  but the Alerts page will show it — resolve or reseed if you want a clean stage.
 
 ### Two defects the evaluation harness caught (both fixed)
 
