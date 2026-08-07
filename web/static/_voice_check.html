@@ -1,0 +1,500 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SentinelBank — voice diagnostics</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!--
+  Why this page exists
+  ────────────────────
+  "Speech recognition needs an internet connection" is what voice.js says when the browser
+  raises SpeechRecognitionErrorEvent.error === "network". That one string covers at least
+  five different causes, and they need different fixes:
+
+    · the machine genuinely has no route out            -> fix the wifi
+    · the browser ships no speech backend / no API key  -> Brave, Vivaldi, plain Chromium
+    · the browser is not Chrome/Edge                    -> Firefox has no working backend
+    · the page origin is not a secure context           -> serve on 127.0.0.1, not a LAN IP
+    · one transient handshake failure at cold start     -> just try again
+
+  The page cannot be diagnosed from the server, because every one of those facts lives in
+  the browser. So it is tested in the browser, on the SAME ORIGIN as the app -- microphone
+  permission and secure-context are both origin-scoped, so testing from a file:// page or a
+  different port would answer a different question than the one being asked.
+
+  Deliberately self-contained: no stylesheet, no app JS, works with the Flask app stopped.
+-->
+<style>
+  :root { color-scheme: light dark; --bg:#0b1020; --fg:#e8ecf8; --dim:#93a0c0;
+          --card:#141a30; --line:#26304e; --ok:#34d399; --warn:#fbbf24; --bad:#f87171; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f6f7fb; --fg:#14181f; --dim:#5a6479; --card:#fff; --line:#dfe3ee;
+            --ok:#047857; --warn:#b45309; --bad:#b91c1c; }
+  }
+  body { margin:0; padding:2rem 1.25rem 4rem; background:var(--bg); color:var(--fg);
+         font:15px/1.55 system-ui, "Segoe UI", sans-serif; }
+  main { max-width:820px; margin:0 auto; }
+  h1 { font-size:1.35rem; margin:0 0 .25rem; }
+  p.lede { color:var(--dim); margin:0 0 1.5rem; }
+  button { font:inherit; font-weight:700; padding:.6rem 1rem; border-radius:.6rem;
+           border:1px solid var(--line); background:var(--card); color:var(--fg);
+           cursor:pointer; }
+  button.go { background:var(--fg); color:var(--bg); border-color:var(--fg); }
+  button:disabled { opacity:.5; cursor:default; }
+  .row { display:flex; gap:.6rem; flex-wrap:wrap; align-items:center; margin-bottom:1.25rem; }
+  .item { border:1px solid var(--line); background:var(--card); border-radius:.7rem;
+          padding:.7rem .9rem; margin-bottom:.5rem; display:grid;
+          grid-template-columns:1.6rem 1fr; gap:.7rem; align-items:start; }
+  .item b { font-weight:700; }
+  .item .d { color:var(--dim); font-size:.88rem; }
+  .mark { font-size:1.05rem; line-height:1.45; }
+  .ok .mark { color:var(--ok); } .warn .mark { color:var(--warn); }
+  .bad .mark { color:var(--bad); } .run .mark { color:var(--dim); }
+  code, .mono { font-family:ui-monospace, Consolas, monospace; font-size:.85em; }
+  #verdict { margin-top:1.5rem; border:1px solid var(--line); border-left-width:4px;
+             background:var(--card); border-radius:.7rem; padding:1rem 1.1rem; }
+  #verdict h2 { font-size:1rem; margin:0 0 .5rem; }
+  #verdict ol { margin:.5rem 0 0; padding-left:1.2rem; }
+  #verdict li { margin-bottom:.35rem; }
+  #verdict.ok { border-left-color:var(--ok); } #verdict.warn { border-left-color:var(--warn); }
+  #verdict.bad { border-left-color:var(--bad); }
+  .hidden { display:none; }
+  textarea { width:100%; box-sizing:border-box; min-height:8rem; margin-top:.75rem;
+             background:var(--bg); color:var(--fg); border:1px solid var(--line);
+             border-radius:.6rem; padding:.6rem; font-family:ui-monospace,Consolas,monospace;
+             font-size:.8rem; }
+</style>
+
+<main>
+  <h1>Voice diagnostics</h1>
+  <p class="lede">
+    Runs the same speech API the assistant uses and reports the raw failure, so
+    <em>“needs an internet connection”</em> can be narrowed to the actual cause.
+    Open this from the running app’s own address — e.g.
+    <code>http://127.0.0.1:5000/static/_voice_check.html</code>.
+  </p>
+
+  <div class="row">
+    <button class="go" id="run">Run diagnostics</button>
+    <button id="copy" disabled>Copy report</button>
+    <span class="d" style="color:var(--dim)">The microphone test will ask for permission.</span>
+  </div>
+
+  <div id="out"></div>
+  <div id="verdict" class="hidden"></div>
+  <textarea id="report" class="hidden" readonly aria-label="Report"></textarea>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  const out = document.getElementById("out");
+  const MARK = { ok: "✔", warn: "!", bad: "✖", run: "…" };
+  const results = [];
+
+  function add(key, tone, title, detail) {
+    let el = document.getElementById("chk-" + key);
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "chk-" + key;
+      out.appendChild(el);
+    }
+    el.className = "item " + tone;
+    el.innerHTML = '<span class="mark">' + MARK[tone] + "</span><div><b></b>" +
+                   '<div class="d"></div></div>';
+    el.querySelector("b").textContent = title;
+    el.querySelector(".d").innerHTML = detail || "";
+    const row = { key: key, tone: tone, title: title,
+                  detail: (detail || "").replace(/<[^>]+>/g, "") };
+    const at = results.findIndex(r => r.key === key);
+    if (at >= 0) results[at] = row; else results.push(row);
+  }
+
+  const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+  /* Chrome hides the real version behind the frozen UA string; userAgentData has it.
+     The distinction that matters is NOT "is this Chromium" -- everything here is. It is
+     whether the build carries Google's speech API key, and only Google Chrome does. A
+     brand list containing "Chromium" but NOT "Google Chrome" is a derivative or an
+     embedded webview, and recognition in those fails with `network` no matter what the
+     network is doing. Getting this backwards sends someone to debug their wifi. */
+  function browser() {
+    const uad = navigator.userAgentData;
+    let name = "unknown", version = "", branded = false;
+    if (uad && uad.brands) {
+      /* Ignore the deliberate "Not)A;Brand" GREASE entry. */
+      const real = uad.brands.filter(b => !/not.a.brand/i.test(b.brand));
+      const pick = real.find(b => /edge/i.test(b.brand)) ||
+                   real.find(b => /brave|opera|vivaldi/i.test(b.brand)) ||
+                   real.find(b => /google chrome/i.test(b.brand)) ||
+                   real.find(b => /chromium/i.test(b.brand)) || real[0];
+      if (pick) { name = pick.brand; version = pick.version; }
+      branded = real.some(b => /google chrome|edge|brave|opera|vivaldi/i.test(b.brand));
+    } else {
+      const ua = navigator.userAgent;
+      const m = ua.match(/(Edg|OPR|Vivaldi|Firefox|Chrome|Safari)\/([\d.]+)/);
+      if (m) { name = { Edg: "Edge", OPR: "Opera" }[m[1]] || m[1]; version = m[2]; }
+      branded = !!m && m[1] !== "Chrome";   /* a bare Chrome/ token proves nothing */
+    }
+    /* Brave hides itself in the UA entirely -- navigator.brave is the only tell. */
+    const brave = !!(navigator.brave && navigator.brave.isBrave);
+    return { name: brave ? "Brave" : name, version: version,
+             brave: brave, branded: branded || brave };
+  }
+
+  function withTimeout(promise, ms, label) {
+    return Promise.race([
+      promise,
+      new Promise((_, rej) => setTimeout(() => rej(new Error(label || "timed out")), ms)),
+    ]);
+  }
+
+  /* ---------------------------------------------------------------- the checks */
+
+  function checkEnvironment() {
+    const b = browser();
+    const engine = b.brave ? "brave"
+                 : /edge/i.test(b.name) ? "edge"
+                 : /google chrome/i.test(b.name) ? "chrome"
+                 : /chromium/i.test(b.name) || !b.branded ? "chromium"
+                 : /firefox/i.test(b.name) ? "firefox"
+                 : /safari/i.test(b.name) ? "safari" : "other";
+
+    const backend = {
+      chrome:  ["ok",   "Chrome sends audio to <b>Google’s</b> speech service. Supported."],
+      edge:    ["ok",   "Edge sends audio to <b>Microsoft Azure</b> speech. Supported."],
+      brave:   ["bad",  "Brave ships Chromium <i>without</i> Google’s speech API key, so " +
+                        "recognition always fails with <code>network</code>. There is no " +
+                        "setting that fixes it — use Chrome or Edge."],
+      chromium:["bad",  "This reports itself as <b>Chromium</b>, not Google Chrome — an " +
+                        "un-branded build or an embedded webview. Those ship without " +
+                        "Google’s speech API key, so recognition fails with " +
+                        "<code>network</code> however good the connection is. Open the app " +
+                        "in <b>Chrome</b> or <b>Edge</b> proper."],
+      firefox: ["bad",  "Firefox exposes the API but has no working backend on desktop; it " +
+                        "fails with <code>network</code>. Use Chrome or Edge."],
+      safari:  ["warn", "Safari uses Apple’s service. Usually works, not what the demo was " +
+                        "built against."],
+      other:   ["warn", "Unrecognised browser. Speech recognition is not part of any web " +
+                        "standard’s required set — most Chromium forks omit the API key."],
+    }[engine];
+
+    add("browser", backend[0], "Browser: " + b.name + (b.version ? " " + b.version : ""),
+        backend[1]);
+    return engine;
+  }
+
+  function checkContext() {
+    const secure = window.isSecureContext;
+    const host = location.hostname;
+    const local = host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+    if (secure) {
+      add("origin", "ok", "Page origin: " + location.origin,
+          local ? "Loopback counts as a secure context, so the microphone is allowed over " +
+                  "plain http." : "Served over HTTPS.");
+    } else {
+      add("origin", "bad", "Page origin: " + location.origin,
+          "<b>Not a secure context.</b> Chrome refuses microphone access on a plain-http " +
+          "origin that is not loopback — reaching the app over a LAN address such as " +
+          "<code>http://192.168.x.x:5000</code> is the usual way this happens. Open it as " +
+          "<code>http://127.0.0.1:5000</code> on the machine itself.");
+    }
+    if (location.protocol === "file:") {
+      add("origin", "bad", "Page origin: file://",
+          "Opened from disk. Serve it from the app instead — permissions are origin-scoped " +
+          "and <code>file://</code> has no usable origin.");
+    }
+    return secure;
+  }
+
+  function checkApi() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    add("api", SR ? "ok" : "bad",
+        SR ? "SpeechRecognition API present" : "No SpeechRecognition API",
+        SR ? (window.SpeechRecognition ? "Unprefixed." : "Prefixed as " +
+              "<code>webkitSpeechRecognition</code>, which is normal in Chrome and Edge.")
+           : "This browser does not expose the API at all. voice.js already handles this " +
+             "case — the mic button disables itself and typing is unaffected.");
+
+    const tts = window.speechSynthesis;
+    const voices = tts ? tts.getVoices().length : 0;
+    add("tts", tts ? "ok" : "warn",
+        tts ? "Speech synthesis present (" + voices + " voices)" : "No speech synthesis",
+        tts ? "Spoken replies are generated <b>on the device</b> and keep working with the " +
+              "network down. This half of voice mode is not affected by the error you saw."
+            : "Replies will not be spoken.");
+    return !!SR;
+  }
+
+  async function checkPermission() {
+    if (!navigator.permissions || !navigator.permissions.query) {
+      add("perm", "warn", "Microphone permission: unknown",
+          "This browser has no Permissions API to ask.");
+      return "unknown";
+    }
+    try {
+      const st = (await navigator.permissions.query({ name: "microphone" })).state;
+      add("perm", st === "denied" ? "bad" : "ok", "Microphone permission: " + st,
+          st === "denied"
+            ? "Blocked for this site. That raises <code>not-allowed</code>, not " +
+              "<code>network</code> — so it is not the cause of your message, but it will " +
+              "stop dictation too. Clear it from the padlock icon in the address bar."
+            : st === "prompt" ? "Will be asked for on first use." : "Already granted.");
+      return st;
+    } catch (e) {
+      add("perm", "warn", "Microphone permission: unknown", esc(e.message));
+      return "unknown";
+    }
+  }
+
+  async function checkMic() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      add("mic", "bad", "Microphone unreachable", "No <code>getUserMedia</code> in this context.");
+      return false;
+    }
+    add("mic", "run", "Microphone…", "Asking for access.");
+    try {
+      const s = await withTimeout(navigator.mediaDevices.getUserMedia({ audio: true }),
+                                  20000, "no answer to the permission prompt");
+      const label = (s.getAudioTracks()[0] || {}).label || "default device";
+      s.getTracks().forEach(t => t.stop());
+      add("mic", "ok", "Microphone works", "Captured from <b>" + esc(label) + "</b>, then " +
+          "released. Audio capture is local, so this succeeding while recognition fails " +
+          "points squarely at the <b>cloud</b> half.");
+      return true;
+    } catch (e) {
+      add("mic", "bad", "Microphone unavailable", esc(e.name + ": " + e.message));
+      return false;
+    }
+  }
+
+  /* Does the BROWSER have a route out? The server having one proves nothing about the
+     browser -- a VPN, a proxy .pac file or an extension can differ per-process. An
+     opaque no-cors response resolving is enough; we only need reach, not content. */
+  async function checkReach() {
+    const targets = [
+      ["google.com", "https://www.google.com/generate_204"],
+      ["gstatic.com", "https://www.gstatic.com/generate_204"],
+    ];
+    add("net", "run", "Internet from the browser…", "");
+    const notes = [];
+    let any = false;
+    for (const [name, url] of targets) {
+      const t0 = performance.now();
+      try {
+        await withTimeout(fetch(url, { mode: "no-cors", cache: "no-store" }), 8000);
+        notes.push(name + " reachable in " + Math.round(performance.now() - t0) + " ms");
+        any = true;
+      } catch (e) {
+        notes.push(name + " <b>unreachable</b> (" + esc(e.message) + ")");
+      }
+    }
+    add("net", any ? "ok" : "bad",
+        any ? "Browser has internet" : "Browser has no internet",
+        notes.join(" · ") + (any ? "" : "<br>This is the honest wifi-off case. The message " +
+        "you saw is correct and nothing is broken — recognition cannot work offline in any " +
+        "browser."));
+    return any;
+  }
+
+  /* The real test. Timing is the signal: a "network" error that lands in well under a
+     second never reached a server -- that is a missing API key or a blocked host, not a
+     slow connection. Several seconds means a genuine timeout. */
+  function trySR(attempt) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    return new Promise(resolve => {
+      let done = false;
+      const t0 = performance.now();
+      const finish = r => {
+        if (done) return;
+        done = true;
+        r.ms = Math.round(performance.now() - t0);
+        try { rec.abort(); } catch (e) { /* already stopped */ }
+        resolve(r);
+      };
+      const rec = new SR();
+      rec.continuous = false;
+      rec.interimResults = true;
+      rec.lang = document.documentElement.lang || "en-GB";
+      rec.onstart  = () => { /* service opened; keep waiting for audio or an error */ };
+      rec.onaudiostart = () => finish({ state: "listening" });
+      rec.onerror  = e => finish({ state: "error", error: e.error, message: e.message || "" });
+      rec.onend    = () => finish({ state: "ended" });
+      setTimeout(() => finish({ state: "listening" }), 6000);
+      try { rec.start(); } catch (e) { finish({ state: "throw", error: e.name, message: e.message }); }
+    });
+  }
+
+  async function checkRecognition() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { add("sr", "bad", "Recognition test skipped", "No API to test."); return null; }
+
+    add("sr", "run", "Starting recognition…", "Say anything, or just wait.");
+    let first = await trySR(1);
+
+    /* Chrome not uncommonly throws one spurious network error on the very first attempt
+       after a cold start, then works. One retry tells transient from permanent -- which is
+       the whole difference between "click it again" and "change browser". */
+    let second = null;
+    if (first.state === "error" && first.error === "network") {
+      add("sr", "run", "First attempt failed with <code>network</code> — retrying…",
+          "Failed in " + first.ms + " ms. Trying once more to tell transient from permanent.");
+      await new Promise(r => setTimeout(r, 900));
+      second = await trySR(2);
+    }
+
+    const last = second || first;
+    const line = a => a.state === "error"
+      ? "<code>" + esc(a.error) + "</code> after " + a.ms + " ms" +
+        (a.message ? " — " + esc(a.message) : "")
+      : a.state + " after " + a.ms + " ms";
+    const detail = second ? ("attempt 1: " + line(first) + "<br>attempt 2: " + line(second))
+                          : line(first);
+
+    if (last.state === "listening") {
+      add("sr", second ? "warn" : "ok",
+          second ? "Recognition works, but the first attempt failed"
+                 : "Recognition works",
+          detail + (second ? "<br><b>Transient.</b> The service connected on the retry. " +
+                    "Clicking the mic again would have worked." : ""));
+    } else if (last.state === "error") {
+      add("sr", "bad", "Recognition failed: " + esc(last.error), detail);
+    } else {
+      add("sr", "warn", "Recognition ended without connecting", detail);
+    }
+    return last;
+  }
+
+  /* ---------------------------------------------------------------- the verdict */
+
+  function verdict(f) {
+    const v = document.getElementById("verdict");
+    let tone = "bad", head, steps = [];
+
+    if (!f.sr) {
+      tone = "bad"; head = "This browser cannot do dictation at all.";
+      steps = ["Open the app in <b>Chrome</b> or <b>Edge</b>.",
+               "Everything else — typing, spoken replies, the whole demo — is unaffected."];
+    } else if (f.sr.state === "listening") {
+      tone = f.retried ? "warn" : "ok";
+      head = f.retried ? "It works — the failure was transient."
+                       : "Speech recognition is working right now.";
+      steps = f.retried
+        ? ["The browser threw one <code>network</code> error at cold start and connected on " +
+           "the retry. That is almost certainly what you hit.",
+           "The mic button stays live after a failure — <b>clicking it again retries</b>. " +
+           "It used to latch off for the session, which is why it looked permanent.",
+           "Nothing to fix on your machine."]
+        : ["Recognition connected first time here, so the fault is not in this browser or " +
+           "this network.",
+           "Check you are testing the same origin: this page is " +
+           "<code>" + location.origin + "</code>. Permission and secure-context are both " +
+           "origin-scoped, so a different port or address answers a different question.",
+           "In the assistant, click the mic again — a failure no longer disables it."];
+    } else if (f.sr.error === "network") {
+      if (!f.net) {
+        tone = "warn"; head = "The browser genuinely has no internet.";
+        steps = ["The message was accurate. Speech recognition is a cloud service in every " +
+                 "browser that ships it — there is no offline mode to fall back to.",
+                 "Spoken replies still work; they are synthesised on the device.",
+                 "For hands-free input with no network, Windows dictation " +
+                 "(<b>Win + H</b>) runs on-device and types into the chat box."];
+      } else if (f.engine === "brave" || f.engine === "chromium" ||
+                 f.engine === "firefox" || f.engine === "other") {
+        tone = "bad"; head = "This browser has no usable speech backend.";
+        steps = ["The network is fine — the browser reached Google in the test above, and " +
+                 "failed in <b>" + f.sr.ms + " ms</b>, far too fast to be a timeout.",
+                 "It fails because it ships Chromium without Google’s speech API key " +
+                 "(Brave, Vivaldi, plain Chromium, embedded webviews) or has no backend at " +
+                 "all (Firefox). <b>The message about the internet connection is a " +
+                 "red herring here</b> — nothing is wrong with your network.",
+                 "Open the app in <b>Chrome</b> or <b>Edge</b>."];
+      } else {
+        tone = "bad"; head = "The browser has internet, but the speech service is unreachable.";
+        steps = [
+          "Failed in <b>" + f.sr.ms + " ms</b>. " + (f.sr.ms < 1500
+            ? "That is too fast to be a timeout — something is refusing the connection " +
+              "outright rather than dropping it."
+            : "Slow enough to be a genuine timeout on the speech endpoint."),
+          "Most likely a corporate proxy or TLS-inspecting firewall. General browsing is " +
+          "allowed through it, but the speech endpoint is not — which is exactly the shape " +
+          "of network this project already works around for the LLM endpoint.",
+          "Test on a phone hotspot. If it works there, it is the network, and nothing in " +
+          "the app can fix it.",
+          "Also worth ruling out: an ad-blocking or privacy extension, and Chrome’s " +
+          "<i>Settings → Privacy → Search and browsing</i> voice controls.",
+          "<b>For the demo:</b> dictation is the only part that needs the cloud. Spoken " +
+          "replies and every other beat work offline — do not put dictation on the " +
+          "critical path.",
+        ];
+      }
+    } else if (f.sr.error === "not-allowed" || f.sr.error === "service-not-allowed") {
+      tone = "bad"; head = "Microphone access is blocked for this site.";
+      steps = ["Click the padlock in the address bar and allow the microphone.",
+               "Then click the mic in the assistant again — no reload needed.",
+               "Note this raises <code>not-allowed</code>, <b>not</b> <code>network</code>. " +
+               "If the message you saw mentioned the internet connection, this is a second, " +
+               "separate problem rather than the one you came here for."];
+    } else if (f.sr.error === "language-not-supported") {
+      tone = "bad"; head = "The requested language is not supported.";
+      steps = ["The page asks for <code>" +
+               esc(document.documentElement.lang || "en-GB") + "</code>."];
+    } else {
+      tone = "warn"; head = "Recognition did not connect, and not with a network error.";
+      steps = ["Raw result: <code>" + esc(f.sr.error || f.sr.state) + "</code>.",
+               "Copy the report below."];
+    }
+
+    v.className = tone;
+    v.innerHTML = "<h2>" + head + "</h2><ol>" +
+                  steps.map(s => "<li>" + s + "</li>").join("") + "</ol>";
+  }
+
+  /* ---------------------------------------------------------------------- run */
+
+  document.getElementById("run").addEventListener("click", async function () {
+    this.disabled = true;
+    out.innerHTML = "";
+    results.length = 0;
+    document.getElementById("verdict").className = "hidden";
+
+    const engine = checkEnvironment();
+    checkContext();
+    const hasApi = checkApi();
+    await checkPermission();
+    const net = await checkReach();
+    await checkMic();
+    const sr = hasApi ? await checkRecognition() : null;
+
+    const retried = !!(sr && sr.state === "listening" &&
+                       results.find(r => r.key === "sr" && /first attempt/i.test(r.title)));
+    verdict({ engine: engine, net: net, sr: sr, retried: retried });
+    document.getElementById("verdict").classList.remove("hidden");
+
+    const report = ["SentinelBank voice diagnostics", new Date().toISOString(),
+                    "origin: " + location.origin, "ua: " + navigator.userAgent, ""]
+      .concat(results.map(r => "[" + r.tone.toUpperCase() + "] " + r.title + " — " + r.detail))
+      .join("\n");
+    const box = document.getElementById("report");
+    box.value = report;
+    box.classList.remove("hidden");
+    document.getElementById("copy").disabled = false;
+    this.disabled = false;
+    this.textContent = "Run again";
+  });
+
+  document.getElementById("copy").addEventListener("click", function () {
+    const box = document.getElementById("report");
+    box.select();
+    navigator.clipboard.writeText(box.value).then(
+      () => { this.textContent = "Copied"; setTimeout(() => this.textContent = "Copy report", 1500); },
+      () => { this.textContent = "Select and copy manually"; });
+  });
+
+  /* getVoices() is empty until the list loads in Chrome; refresh the TTS line when it does. */
+  if (window.speechSynthesis) {
+    window.speechSynthesis.addEventListener("voiceschanged", () => {
+      if (document.getElementById("chk-tts")) checkApi();
+    });
+  }
+})();
+</script>

@@ -283,6 +283,15 @@ and fits on a screen."
 confirm. You can't POST past it. That's also why the voice mode won't accept a spoken 'yes' —
 a misheard word must not be able to freeze a card."
 
+> ⚠️ **Do not put dictation on the critical path.** It is the one feature here that
+> genuinely needs the cloud — every browser's speech recognition streams audio to a vendor
+> service, so it dies with the wifi and it dies behind a proxy that blocks the endpoint.
+> Spoken *replies* are synthesised on the device and survive both. Check it on the demo
+> machine, in the demo browser, on the demo network, at
+> `/static/_voice_check.html` — and if it fails there, type instead and say nothing about
+> it. Note the checker needs **Chrome or Edge proper**: a bare Chromium build ships without
+> the speech API key and fails no matter how good the connection is.
+
 ---
 
 ### 2:30–3:15 · The false positive you prevented

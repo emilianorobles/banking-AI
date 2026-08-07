@@ -186,7 +186,8 @@ blocked on an API key.** The whole app runs today with `DEMO_MODE=off` (rules on
 - [x] Currency symbols throughout — `core/money.py`, injected as `window.SB_CURRENCY`
 - [x] `web/mdlite.py` — the agent's markdown tables actually render; `VISUALS` chat charts
 - [x] Voice I/O (`web/static/js/voice.js`) — dictation in, spoken replies out, and **no**
-      spoken path past the approval gate
+      spoken path past the approval gate. A speech failure no longer latches the mic off,
+      and `/static/_voice_check.html` diagnoses it (bug 15)
 - [x] Pitch material — `docs/VALUE_PROPOSITION.md`, `/ops/business-case`, talk track
 - [x] Bounded failover: `PRIMARY_TIMEOUT` (12s) separate from the fallback's budget
 - [ ] **← NEXT: slide deck** (docs/ARCHITECTURE.md headings map to slides)
@@ -340,6 +341,10 @@ python3 -m http.server 8765 --directory web/static   # then open /_harness.html
 Press **Reload CSS** before **Run assertions** after editing `glass.css`, or the browser
 grades the cached copy.
 
+**`web/static/_voice_check.html` is the other one** — the voice diagnostic. Unlike the theme
+harness it must be served **by the app**, at `/static/_voice_check.html`, because microphone
+permission and secure-context are origin-scoped and it is testing exactly those. See bug 15.
+
 **Both themes clear WCAG AA at every gradient stop.** `--grad-a` and `--grad-danger` carry
 white text on `.btn-primary`, `.btn-danger` and `.msg.user` at 700-weight `.86rem` — normal
 text by WCAG's definition, not large — so each stop needs 4.5:1 on its own:
@@ -483,6 +488,35 @@ Assertion 5 in the harness reports all of these, so brightening a stop back fail
     first, so the progress bar moves before the first model call. **A function that takes
     `rows` and one that returns rows are not the same shape; name and type them so the
     difference is visible at the call site.**
+
+15. **One speech error killed the mic for the whole session, and blamed the wrong thing.**
+    `voice.js` set a single `sttDead` flag on `error: "network"`, which both stopped the
+    auto-restart loop *and* disabled the button — so the only way back was a page reload,
+    on the one control the user was already looking at. Chrome throws a spurious `network`
+    at cold start often enough that a single one cannot be treated as permanent. Those are
+    two different concerns and are now two flags: `sttDead` stops the **loop** (a dead
+    service would otherwise spin forever), `sttBlocked` disables the **button** and is only
+    ever set when the browser has no API at all. `start(manual)` distinguishes the user
+    clicking the mic — which clears the failure and retries — from the automatic restart
+    after a spoken reply, which does not. `onaudiostart` resets everything, because the
+    service is proven up the moment it opens the stream.
+
+    The message was wrong too. `network` does **not** prove the wifi is down; it is equally
+    a proxy refusing the speech endpoint on a connection that is otherwise fine, which is
+    the likelier reading on this network. Telling someone to check their internet sends
+    them to fix a thing that isn't broken. It now asks `navigator.onLine` first — only
+    trustworthy in one direction, but that is the direction needed — and says *"unreachable
+    even though the connection is up"* when online.
+
+    `web/static/_voice_check.html` is the diagnostic, and it exists because **none of the
+    five causes behind that one error string are visible from the server**: browser build,
+    secure context, mic permission, the browser's own route out, and the raw error with its
+    timing (a `network` failure in under a second never reached a server — that is a missing
+    API key, not a slow link). Serve it from the app so it shares the app's origin;
+    permission and secure-context are both origin-scoped, so testing from `file://` or
+    another port answers a different question. It caught its own bug immediately: it called
+    a bare `Chromium` build "Chrome, supported", when the brand *without* `Google Chrome`
+    beside it is precisely the no-API-key case that always fails.
 
 ### Stateful demo traps (all three are pre-flight checklist items)
 

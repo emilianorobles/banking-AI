@@ -18,8 +18,20 @@
  * ── HONEST DEGRADATION ─────────────────────────────────────────────────────────────
  * Speech recognition is a cloud service in every browser that ships it, so it is the
  * first thing to die when the wifi does -- which, for this demo, is a scheduled event.
- * Speech synthesis is local and survives. The mic therefore disables itself with a calm
- * inline note (not a red toast), typing is never affected, and spoken replies keep going.
+ * Speech synthesis is local and survives. The mic therefore falls back with a calm inline
+ * note (not a red toast), typing is never affected, and spoken replies keep going.
+ *
+ * A network failure stops the AUTO-RESTART LOOP but does not disable the button. Those
+ * were one flag once, and it was wrong: Chrome throws a spurious `network` at cold start
+ * often enough that a single one cannot be treated as permanent, and latching the button
+ * off meant the only way back was a page reload -- during a demo, on the one control the
+ * user is already looking at. The loop must stop (a dead service would spin forever); the
+ * user must still be able to click. Only a browser with no API at all disables the button.
+ *
+ * The wording matters too. `network` does not prove the wifi is down -- it is equally a
+ * proxy refusing the speech endpoint on a connection that is otherwise fine, which is the
+ * likelier reading on a corporate network. Ask navigator.onLine before blaming the wifi,
+ * and send anyone who wants the real answer to /static/_voice_check.html.
  */
 (function (global) {
   "use strict";
@@ -38,10 +50,17 @@
 
     let voiceMode = false;      /* speak replies, and listen again after each one */
     let listening = false;
-    let sttDead = false;        /* network error: disabled for the rest of the session */
+    let sttDead = false;        /* stop AUTO-restarting; a manual click still retries */
+    let sttBlocked = false;     /* no API in this browser: the button is genuinely useless */
+    let netFails = 0;           /* consecutive `network` errors, reset by any audio */
     let awaitingApproval = false;
     let rec = null;
     let retriedSilence = false;
+
+    /* navigator.onLine is only trustworthy in one direction -- false really does mean no
+       route, true means "a network exists", not "the internet answers". That asymmetry is
+       exactly what is needed here: it is enough to stop us blaming the wifi wrongly. */
+    function offline() { return "onLine" in navigator && !navigator.onLine; }
 
     /* ------------------------------------------------------------------ ui */
     function say(message, tone) {
@@ -54,11 +73,13 @@
     }
 
     function paintMic() {
-      const off = sttDead || !SR;
-      mic.disabled = off;
+      /* Only a browser with no API disables the button. After a failure the mic stays
+         clickable on purpose -- retrying is one tap, and the alternative is a reload. */
+      mic.disabled = sttBlocked;
       mic.setAttribute("aria-pressed", listening ? "true" : "false");
       mic.textContent = listening ? "🔴" : "🎤";
-      mic.title = off ? "Speech recognition is not available" :
+      mic.title = sttBlocked ? "Speech recognition is not available in this browser" :
+                  sttDead ? "Dictation failed — click to try again" :
                   listening ? "Stop listening" : "Dictate";
       let pill = document.getElementById("chat-listening");
       if (listening && !pill && status) {
@@ -141,6 +162,12 @@
 
       let finalText = "";
 
+      /* Audio is flowing, so whatever failed last time is over. Clear the failure state
+         here rather than in onresult -- the service is proven up the moment it opens the
+         stream, and waiting for a transcript would leave the warning on screen through a
+         silent pause. */
+      r.onaudiostart = () => { netFails = 0; sttDead = false; say(""); paintMic(); };
+
       r.onresult = e => {
         let interim = "";
         finalText = "";
@@ -156,17 +183,32 @@
 
       r.onerror = e => {
         listening = false;
-        paintMic();
         switch (e.error) {
           case "network":
-            /* THE WIFI-OFF CASE. Calm and inline -- this is expected, not a failure. */
+            /* Stop the auto-restart loop, keep the button live. Calm and inline -- with
+               the wifi off this is expected, not a failure. */
             sttDead = true;
-            say("Speech recognition needs an internet connection. Typing still works.");
+            netFails += 1;
+            if (netFails === 1) {
+              say("Couldn't reach the speech service. Click the mic to try again — " +
+                  "typing always works.");
+            } else if (offline()) {
+              say("Speech recognition needs an internet connection: dictation is the one " +
+                  "part of this that cannot work offline. Typing and spoken replies still " +
+                  "work.");
+            } else {
+              /* Online, and still refused. Blaming the wifi here would send someone to
+                 fix the wrong thing -- on this network the likelier answer is a proxy. */
+              say("The speech service is unreachable even though the connection is up — " +
+                  "usually a proxy or the browser. Diagnose it at /static/_voice_check.html. " +
+                  "Typing still works.", "warn");
+            }
             break;
           case "not-allowed":
           case "service-not-allowed":
             sttDead = true;
-            say("Microphone permission is off for this site. Typing still works.");
+            say("Microphone permission is off for this site. Allow it from the padlock in " +
+                "the address bar, then click the mic again. Typing still works.");
             break;
           case "no-speech":
             if (!retriedSilence) {       /* one quiet retry, then stop pestering */
@@ -182,6 +224,9 @@
           default:
             say("Speech recognition stopped: " + e.error + ". Typing still works.");
         }
+        /* After the switch, not before it -- the button's tooltip is the affordance that
+           says a retry is possible, and painting it first showed the pre-failure state. */
+        paintMic();
       };
 
       r.onend = () => {
@@ -198,8 +243,12 @@
       return r;
     }
 
-    function start() {
-      if (!SR || sttDead || listening || awaitingApproval) return;
+    /* `manual` = the user clicked the mic. That clears a previous failure and tries again;
+       the automatic restart after a spoken reply does not, or a dead service would spin. */
+    function start(manual) {
+      if (!SR || sttBlocked || listening || awaitingApproval) return;
+      if (sttDead && !manual) return;
+      if (manual) sttDead = false;
       rec = rec || build();
       try {
         rec.start();
@@ -221,8 +270,7 @@
 
     /* -------------------------------------------------------------- wiring */
     if (!SR) {
-      mic.disabled = true;
-      mic.title = "This browser has no speech recognition";
+      sttBlocked = true;
       say("Dictation needs Chrome or Edge. Typing works everywhere, and spoken replies " +
           "still work here.");
     }
@@ -231,7 +279,7 @@
 
     mic.addEventListener("click", () => {
       hush();
-      if (listening) stop(); else { retriedSilence = false; start(); }
+      if (listening) stop(); else { retriedSilence = false; start(true); }
     });
 
     voice.addEventListener("click", () => {
@@ -268,7 +316,7 @@
             const done = () => {
               awaitingApproval = false;
               say("");
-              if (voiceMode) setTimeout(start, 400);
+              if (voiceMode) setTimeout(() => start(), 400);
             };
             card.addEventListener("click", done, { once: true });
             const cancel = card.parentElement &&
@@ -281,13 +329,16 @@
         return;
       }
 
+      /* No sttDead check here -- start() owns that decision, and a second copy of the rule
+         is a second place for it to drift. */
       speak(data.text, () => {
-        if (voiceMode && !awaitingApproval && !sttDead) setTimeout(start, 250);
+        if (voiceMode && !awaitingApproval) setTimeout(() => start(), 250);
       });
     });
 
     global.SBVoice = { speakable, speak, start, stop,
                        get voiceMode() { return voiceMode; },
-                       get available() { return !!SR && !sttDead; } };
+                       get available() { return !!SR && !sttBlocked; },
+                       get healthy() { return !!SR && !sttBlocked && !sttDead; } };
   });
 })(window);
