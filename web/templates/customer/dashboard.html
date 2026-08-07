@@ -92,7 +92,10 @@
   <div class="glass card card-click center" data-drill="security:_total"
        data-drill-title="Security score">
     <div class="label">Security posture</div>
-    <div id="security-gauge" style="margin-top:.4rem"></div>
+    {# Width is load-bearing: .chart is width:100%, so an unconstrained gauge inflates to the
+       whole card and dwarfs the 118px health ring in the card beside it. 210px matches the
+       security page. #}
+    <div id="security-gauge" style="width:210px;margin:.4rem auto 0"></div>
     <div class="small muted">
       {{ posture.checks|selectattr('passed')|list|length }} of {{ posture.checks|length }}
       checks passing
