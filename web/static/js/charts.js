@@ -1,8 +1,11 @@
 /* SentinelBank charts — hand-drawn SVG, zero dependencies.
  *
  * Deliberately not Chart.js or ECharts: the demo has to run with the wifi off, and a
- * chart library loaded from a CDN is the first thing to break. Hand-drawn SVG also reads
- * colours straight from the CSS custom properties, so charts and chrome never drift apart.
+ * chart library loaded from a CDN is the first thing to break.
+ *
+ * Colours are emitted as live `var(--token, fallback)` rather than resolved values, so
+ * charts and chrome can never drift apart and a theme switch recolours every chart with
+ * no redraw at all -- see paint() below.
  *
  * Every function takes (el, data, opts) and replaces el's contents.
  */
@@ -11,22 +14,44 @@
 
   const NS = "http://www.w3.org/2000/svg";
 
-  function cssVar(name, fallback) {
-    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    return v || fallback;
-  }
+  /* Theme-live paint. Deliberately does NOT resolve the variable: the literal
+     "var(--x, fallback)" keeps the colour bound to the cascade, so flipping data-theme
+     recolours every chart with no redraw, no registry, and -- critically -- no replayed
+     entry animations. Charts used to bake getComputedStyle() results into attributes at
+     draw time and would have gone stale on the first theme switch.
+
+     The fallback is mandatory. An unresolvable var() in a paint slot does not fall back to
+     a sensible default -- it computes to BLACK, which on a dark page is an invisible chart.
+     _harness.html asserts no chart node computes to rgb(0,0,0) for exactly this reason. */
+  function paint(name, fallback) { return `var(${name}, ${fallback})`; }
 
   function palette() {
     return [
-      cssVar("--info", "#60a5fa"), cssVar("--violet", "#a78bfa"),
-      cssVar("--ok", "#34d399"), cssVar("--warn", "#fbbf24"),
-      cssVar("--danger", "#f87171"), "#22d3ee", "#f472b6", "#a3e635",
+      paint("--info", "#60a5fa"), paint("--violet", "#a78bfa"),
+      paint("--ok", "#34d399"), paint("--warn", "#fbbf24"),
+      paint("--danger", "#f87171"), paint("--cyan", "#22d3ee"),
+      paint("--pink", "#f472b6"), paint("--lime", "#a3e635"),
     ];
   }
 
+  /* Paint attributes carrying a var() go through style, not setAttribute.
+     Two reasons. A presentation attribute LOSES to a stylesheet rule, so `fill="var(--x)"`
+     would be overridden by .chart text{fill:...} in glass.css, whereas an inline style wins
+     -- that preserves the precedence the code already had. And var() in a presentation
+     attribute is not universally supported, while an inline style is unambiguously CSS.
+     This also transparently upgrades the templates that already pass colour:"var(--ok)". */
+  const PAINT = { fill: 1, stroke: 1, "stop-color": 1, "flood-color": 1 };
+
   function el(tag, attrs, text) {
     const n = document.createElementNS(NS, tag);
-    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    for (const k in attrs) {
+      const v = attrs[k];
+      if (PAINT[k] && typeof v === "string" && v.lastIndexOf("var(", 0) === 0) {
+        n.style.setProperty(k, v);
+      } else {
+        n.setAttribute(k, v);
+      }
+    }
     if (text !== undefined) n.textContent = text;
     return n;
   }
@@ -55,10 +80,10 @@
   }
 
   function gradeColour(score) {
-    if (score >= 88) return cssVar("--ok", "#34d399");
-    if (score >= 72) return "#a3e635";
-    if (score >= 55) return cssVar("--warn", "#fbbf24");
-    return cssVar("--danger", "#f87171");
+    if (score >= 88) return paint("--ok", "#34d399");
+    if (score >= 72) return paint("--lime", "#a3e635");
+    if (score >= 55) return paint("--warn", "#fbbf24");
+    return paint("--danger", "#f87171");
   }
 
   /* ------------------------------------------------------------------ ring */
@@ -73,7 +98,7 @@
 
     s.appendChild(el("circle", {
       cx: size / 2, cy: size / 2, r: r, fill: "none",
-      stroke: cssVar("--glass-3", "rgba(255,255,255,.11)"), "stroke-width": sw,
+      stroke: paint("--glass-3", "rgba(255,255,255,.11)"), "stroke-width": sw,
     }));
 
     const arc = el("circle", {
@@ -123,7 +148,7 @@
     if (opts.centreLabel) {
       s.appendChild(el("text", {
         x: cx, y: cy - 4, "text-anchor": "middle",
-        style: `font-size:20px;font-weight:800;fill:${cssVar("--ink", "#fff")}`,
+        style: `font-size:20px;font-weight:800;fill:${paint("--ink", "#fff")}`,
       }, opts.centreLabel));
       if (opts.centreSub) {
         s.appendChild(el("text", { x: cx, y: cy + 14, "text-anchor": "middle",
@@ -167,7 +192,7 @@
       const bh = (d.value / max) * ih;
       const x = pad.l + i * bw + bw * 0.18;
       const bwidth = bw * 0.64;
-      const colour = d.colour || opts.colour || cssVar("--info", "#60a5fa");
+      const colour = d.colour || opts.colour || paint("--info", "#60a5fa");
       const rect = el("rect", {
         x: x, y: pad.t + ih, width: bwidth, height: 0, rx: 5, fill: colour, opacity: .85,
       });
@@ -255,7 +280,7 @@
         const bh = (p.barValue !== undefined ? p.barValue : p.value) / max * ih;
         const rect = el("rect", {
           x: X(i) - bw / 2, y: pad.t + ih - bh, width: bw, height: Math.max(1, bh),
-          fill: cssVar("--info", "#60a5fa"), opacity: .28, rx: 2,
+          fill: paint("--info", "#60a5fa"), opacity: .28, rx: 2,
         });
         title(rect, `${p.label}: ${fmt(p.barValue !== undefined ? p.barValue : p.value)}`);
         s.appendChild(rect);
@@ -268,26 +293,30 @@
     const gid = "grad" + Math.random().toString(36).slice(2, 8);
     const defs = el("defs", {});
     const lg = el("linearGradient", { id: gid, x1: "0", y1: "0", x2: "0", y2: "1" });
-    lg.appendChild(el("stop", { offset: "0%", "stop-color": cssVar("--violet", "#a78bfa"), "stop-opacity": ".45" }));
-    lg.appendChild(el("stop", { offset: "100%", "stop-color": cssVar("--violet", "#a78bfa"), "stop-opacity": "0" }));
+    lg.appendChild(el("stop", { offset: "0%", "stop-color": paint("--violet", "#a78bfa"), "stop-opacity": ".45" }));
+    lg.appendChild(el("stop", { offset: "100%", "stop-color": paint("--violet", "#a78bfa"), "stop-opacity": "0" }));
     defs.appendChild(lg); s.appendChild(defs);
 
     s.appendChild(el("path", { d: area, fill: `url(#${gid})`, stroke: "none" }));
 
     const stroke = el("path", {
-      d: line, fill: "none", stroke: cssVar("--violet", "#a78bfa"),
+      d: line, fill: "none", stroke: paint("--violet", "#a78bfa"),
       "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round",
     });
-    const len = 2000;
+    /* Measure the path instead of guessing at it. This was a hardcoded 2000, which is only
+       ever right by accident: a short series finished drawing instantly because the dash
+       already covered it, and a long one never finished inside the 1s transition. The path
+       has to be in the document before getTotalLength() will measure it. */
+    s.appendChild(stroke);
+    const len = Math.ceil(stroke.getTotalLength()) || 1;
     stroke.setAttribute("stroke-dasharray", len);
     stroke.setAttribute("stroke-dashoffset", len);
     stroke.style.transition = "stroke-dashoffset 1s ease-out";
-    s.appendChild(stroke);
     requestAnimationFrame(() => stroke.setAttribute("stroke-dashoffset", 0));
 
     pts.forEach((p, i) => {
       const dot = el("circle", { cx: X(i), cy: Y(p.value), r: 3.2,
-        fill: cssVar("--bg-1", "#0b1120"), stroke: cssVar("--violet", "#a78bfa"), "stroke-width": 2 });
+        fill: paint("--bg-1", "#0b1120"), stroke: paint("--violet", "#a78bfa"), "stroke-width": 2 });
       title(dot, `${p.label}: ${fmt(p.value)}`);
       s.appendChild(dot);
     });
@@ -296,12 +325,12 @@
       const y = Y(rf.value);
       s.appendChild(el("line", {
         x1: pad.l, y1: y, x2: w - pad.r, y2: y,
-        stroke: rf.colour || cssVar("--warn", "#fbbf24"),
+        stroke: rf.colour || paint("--warn", "#fbbf24"),
         "stroke-width": 1.5, "stroke-dasharray": "5 4", opacity: .85,
       }));
       s.appendChild(el("text", {
         x: w - pad.r, y: y - 5, "text-anchor": "end",
-        style: `fill:${rf.colour || cssVar("--warn", "#fbbf24")};font-size:9.5px;font-weight:700`,
+        style: `fill:${rf.colour || paint("--warn", "#fbbf24")};font-size:9.5px;font-weight:700`,
       }, `${rf.label} ${fmt(rf.value)}`));
     });
 
@@ -325,7 +354,7 @@
       `${i ? "L" : "M"} ${(i / (values.length - 1 || 1)) * w} ${h - ((v - min) / span) * (h - 4) - 2}`
     ).join(" ");
     s.appendChild(el("path", {
-      d: d, fill: "none", stroke: opts.colour || cssVar("--info", "#60a5fa"),
+      d: d, fill: "none", stroke: opts.colour || paint("--info", "#60a5fa"),
       "stroke-width": 1.8, "stroke-linecap": "round", "stroke-linejoin": "round",
     }));
   }
@@ -339,7 +368,7 @@
     const w = cols * (cw + gap) + 46, h = rows * (ch + gap) + 24;
     const max = Math.max(...cells.map(c => c.value), 1);
     const s = svg(host, w, h);
-    const base = cssVar("--info", "#60a5fa");
+    const base = paint("--info", "#60a5fa");
 
     cells.forEach(c => {
       const x = 44 + c.col * (cw + gap);
@@ -358,19 +387,24 @@
   }
 
   /* ---------------------------------------------------------------- gauge */
+  /* The 17px of slack above the arc and 11px below is deliberate, not sloppy centring:
+     opts.sub renders at baseline cy+6 = 106 at 10px, so its descenders reach ~108 in a
+     118-tall box. Rebalancing the arc vertically clips the sub-label. */
   function gauge(host, value, opts) {
     opts = opts || {};
     const w = 200, h = 118, cx = w / 2, cy = 100, r = 76, sw = 14;
     const s = svg(host, w, h);
     const pct = Math.max(0, Math.min(1, value / (opts.max || 100)));
 
-    /* `from` and `to` are fractions of the gauge, and the gauge is a half circle -- so a
-       span of 1.0 is 180 degrees and the sweep can never exceed that. The SVG large-arc
-       flag is therefore always 0. It used to be `(to - from) > .5`, which confuses "more
-       than half the gauge" with "more than half a circle": any value above 50 asked SVG
-       to take the long way round and the arc was drawn as its 230-degree complement,
-       wrapping under the bottom of the dial. The grey track hid the bug because
-       arcPath(0, 1) is exactly 180 degrees, where both flag values draw the same path. */
+    /* f maps onto the TOP semicircle (a = PI + f*PI), so the sweep is (to-from)*180deg and
+       can never exceed 180. The large-arc-flag is therefore always 0.
+       It used to be `(to - from) > .5 ? 1 : 0`, copied from donut() where the fraction is of
+       a full turn. Here it flipped to 1 at a 90deg sweep -- i.e. any value above 50 -- and
+       with sweep-flag 1 the renderer then picks the *other* candidate circle centre and
+       draws the complementary 360-sweep arc, which detaches from the track and is clipped by
+       the viewBox. The grey track is exactly 180deg, so both of its candidate centres
+       degenerate to the same point and it always rendered correctly. That is why only the
+       coloured arc jumped, and why this went unnoticed. Do not "restore" the ternary. */
     const arcPath = (from, to) => {
       const a1 = Math.PI + from * Math.PI, a2 = Math.PI + to * Math.PI;
       const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
@@ -380,7 +414,7 @@
 
     s.appendChild(el("path", {
       d: arcPath(0, 1), fill: "none", "stroke-width": sw, "stroke-linecap": "round",
-      stroke: cssVar("--glass-3", "rgba(255,255,255,.11)"),
+      stroke: paint("--glass-3", "rgba(255,255,255,.11)"),
     }));
     s.appendChild(el("path", {
       d: arcPath(0, Math.max(0.001, pct)), fill: "none", "stroke-width": sw,
@@ -388,7 +422,7 @@
     }));
     s.appendChild(el("text", {
       x: cx, y: cy - 12, "text-anchor": "middle",
-      style: `font-size:24px;font-weight:800;fill:${cssVar("--ink", "#fff")}`,
+      style: `font-size:24px;font-weight:800;fill:${paint("--ink", "#fff")}`,
     }, opts.display || String(Math.round(value))));
     if (opts.sub) {
       s.appendChild(el("text", { x: cx, y: cy + 6, "text-anchor": "middle", style: "font-size:10px" }, opts.sub));

@@ -62,6 +62,11 @@
        </div>`;
     host.classList.add("open");
     host.querySelector("[data-close]").addEventListener("click", closeModal);
+    /* Drill targets inside modal content were dead clicks: wireDrilldowns() only ever ran
+       once on DOMContentLoaded, so anything injected later was never bound. It is
+       idempotent via dataset.drillWired, so this central hook is safe and means a drill
+       inside a drill cannot be forgotten. */
+    wireDrilldowns(host);
     document.body.style.overflow = "hidden";
   }
 
@@ -111,7 +116,12 @@
                <pre class="code">${escapeHtml(d.formula)}</pre>`;
     }
     if (d.evidence && d.evidence.length) {
-      const cols = Object.keys(d.evidence[0]);
+      /* Union of keys across every row, in first-seen order. Taking the columns from
+         evidence[0] alone silently dropped any field the first record happened not to
+         carry, and shifted the rest of that row's cells under the wrong headers. The
+         "—" fallback below already covers the gaps. */
+      const cols = [];
+      d.evidence.forEach(row => Object.keys(row).forEach(k => { if (!cols.includes(k)) cols.push(k); }));
       html += `<h4 style="margin-top:1rem">The records this came from</h4>
                <div class="tbl-wrap"><table class="tbl"><thead><tr>` +
         cols.map(c => `<th>${escapeHtml(prettyKey(c))}</th>`).join("") +
@@ -182,6 +192,57 @@
     applyMask();
   }
 
+  /* ---------------------------------------------------------------- theme */
+  /* Two states the user can pick, plus "no choice", which follows the OS. The stored value
+     is the *preference*, not the resolved theme: absent means "keep following the system",
+     so a customer who never touches the toggle tracks their laptop for good. Same contract
+     as MASK_KEY above.
+     The attribute itself is set pre-paint by partials/theme_boot.html; everything here is
+     just keeping the button glyph honest and reacting to clicks. */
+  const THEME_KEY = "sb.theme";
+
+  function storedTheme() {
+    try {
+      const t = localStorage.getItem(THEME_KEY);
+      return t === "light" || t === "dark" ? t : null;
+    } catch (e) { return null; }        /* Safari private browsing throws on access */
+  }
+
+  function currentTheme() {
+    const set = document.documentElement.getAttribute("data-theme");
+    if (set === "light" || set === "dark") return set;
+    return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  }
+
+  function applyTheme() {
+    const theme = currentTheme();
+    document.querySelectorAll("[data-theme-toggle]").forEach(b => {
+      /* Show the destination, not the current state — same idea as [data-eye] showing an
+         open eye while the balance is hidden. */
+      b.textContent = theme === "light" ? "🌙" : "☀️";
+      b.setAttribute("aria-label", theme === "light" ? "Switch to dark theme" : "Switch to light theme");
+      b.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
+    });
+    document.dispatchEvent(new CustomEvent("sb:themechange", { detail: { theme } }));
+  }
+
+  function toggleTheme() {
+    const next = currentTheme() === "light" ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* storage disabled */ }
+    applyTheme();
+  }
+
+  /* Charts do not need redrawing — their paint is emitted as live var() so the browser
+     re-resolves it. This listener only exists so the glyph stays correct when the OS theme
+     changes underneath a user who has not pinned a preference. */
+  function watchSystemTheme() {
+    const mq = window.matchMedia("(prefers-color-scheme: light)");
+    const onChange = () => { if (!storedTheme()) applyTheme(); };
+    if (mq.addEventListener) mq.addEventListener("change", onChange);
+    else if (mq.addListener) mq.addListener(onChange);     /* older Safari */
+  }
+
   /* --------------------------------------------------------- notifications */
   let lastNotificationId = null;
 
@@ -228,7 +289,10 @@
   document.addEventListener("DOMContentLoaded", () => {
     wireDrilldowns();
     applyMask();
+    applyTheme();
+    watchSystemTheme();
     document.querySelectorAll("[data-eye]").forEach(b => b.addEventListener("click", toggleMask));
+    document.querySelectorAll("[data-theme-toggle]").forEach(b => b.addEventListener("click", toggleTheme));
     if (document.body.dataset.poll === "1") {
       pollNotifications();
       setInterval(pollNotifications, 5000);
@@ -238,6 +302,6 @@
   global.SB = {
     getJSON, postJSON, toast, openModal, closeModal, loadingModal,
     drill, wireDrilldowns, escapeHtml, money, prettyKey, renderDrill,
-    pollNotifications, applyMask,
+    pollNotifications, applyMask, applyTheme, toggleTheme, currentTheme,
   };
 })(window);

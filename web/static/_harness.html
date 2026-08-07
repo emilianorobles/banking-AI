@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SentinelBank — visual QA harness</title>
+
+<script>
+  /* Mirrors web/templates/partials/theme_boot.html exactly, plus the harness's ?frame=
+     override. Deliberately the real logic rather than a mock: the bootstrap is one of the
+     things under test. Must run before the stylesheet link so there is no flash. */
+  (function () {
+    var frame = new URLSearchParams(location.search).get("frame");
+    if (frame === "light" || frame === "dark") {
+      document.documentElement.setAttribute("data-theme", frame);
+      return;
+    }
+    if (frame === "system") return;          /* no attribute: exercise the media-query path */
+    try {
+      var t = localStorage.getItem("sb.theme");
+      if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+    } catch (e) { /* Safari private mode throws */ }
+  })();
+</script>
+
+<link rel="stylesheet" href="css/glass.css">
+
+<style>
+  /* Harness chrome only. Everything is .h- prefixed so it cannot leak into the gallery. */
+  .h-shell { padding: 1rem 1.2rem 3rem; max-width: 1900px; margin: 0 auto; }
+  .h-frames { display: grid; grid-template-columns: repeat(auto-fit, minmax(520px, 1fr)); gap: .8rem; }
+  .h-frame { display: flex; flex-direction: column; min-width: 0; }
+  .h-frame iframe { width: 100%; height: 78vh; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg-0); }
+  .h-bar { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin-bottom: .8rem; }
+  .h-out { font-family: var(--mono); font-size: .74rem; line-height: 1.6; white-space: pre-wrap;
+           max-height: 44vh; overflow: auto; margin-top: .6rem; }
+  .h-pass { color: var(--ok); } .h-fail { color: var(--danger); font-weight: 800; } .h-warn { color: var(--warn); }
+  .h-sec { margin: 1.6rem 0 .6rem; }
+  .h-gal { padding: 1rem 1.2rem 4rem; }
+  .h-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .4rem; }
+  .h-sw { border-radius: var(--r-sm); border: 1px solid var(--line); padding: .4rem .5rem; font-size: .62rem; }
+</style>
+</head>
+
+<body data-poll="0">
+
+<!-- ===================================================================== shell -->
+<div class="h-shell" id="h-shell" hidden>
+  <div class="between" style="margin-bottom:.9rem">
+    <div>
+      <h1 style="margin:0">Visual QA harness</h1>
+      <div class="small muted">Both themes side by side, against the real
+        <span class="mono">css/glass.css</span> and <span class="mono">js/charts.js</span>.</div>
+    </div>
+    <div class="h-bar" style="margin:0">
+      <button class="btn btn-sm" id="h-reload">Reload CSS</button>
+      <button class="btn btn-sm" id="h-flip">Live-flip both frames</button>
+      <button class="btn btn-sm btn-primary" id="h-assert">Run assertions</button>
+    </div>
+  </div>
+
+  <div class="h-frames">
+    <div class="h-frame">
+      <div class="label" style="margin-bottom:.35rem">data-theme="dark"</div>
+      <iframe id="f-dark" src="_harness.html?frame=dark" title="Dark theme gallery"></iframe>
+    </div>
+    <div class="h-frame">
+      <div class="label" style="margin-bottom:.35rem">data-theme="light"</div>
+      <iframe id="f-light" src="_harness.html?frame=light" title="Light theme gallery"></iframe>
+    </div>
+    <div class="h-frame">
+      <div class="label" style="margin-bottom:.35rem">no attribute — follows the OS</div>
+      <iframe id="f-system" src="_harness.html?frame=system" title="System theme gallery"></iframe>
+    </div>
+  </div>
+
+  <div class="glass card" style="margin-top:1rem">
+    <div class="label">Assertions</div>
+    <div class="h-out" id="h-out"><span class="dim">Press “Run assertions”.</span></div>
+  </div>
+</div>
+
+<!-- =================================================================== gallery -->
+<div class="h-gal" id="h-gal" hidden>
+
+  <section class="hero" id="g-hero">
+    <h1 style="margin:0 0 .3rem">Hero surface</h1>
+    <div class="muted small">Gradient wash plus the <span class="mono">::after</span> bloom, both themed.</div>
+    <div class="row" style="margin-top:.7rem">
+      <span class="brand-mark">🛡️</span>
+      <button class="btn btn-primary btn-sm">Primary</button>
+      <button class="btn btn-ok btn-sm">Confirm</button>
+      <button class="btn btn-danger btn-sm">Freeze card</button>
+    </div>
+  </section>
+
+  <div class="label h-sec">Tokens</div>
+  <div class="glass card">
+    <div class="h-swatches" id="g-swatches"></div>
+  </div>
+
+  <div class="label h-sec">Header controls</div>
+  <div class="glass card row">
+    <button class="eye" data-eye type="button" aria-label="Show balance">👁</button>
+    <button class="eye" data-theme-toggle type="button" aria-label="Switch theme">🌙</button>
+    <span class="maskable masked"><span class="mask-target num">₹4,82,140</span></span>
+    <span class="small dim">masked balance →</span>
+  </div>
+  <hr class="divider">
+
+  <div class="label h-sec">Pills</div>
+  <div class="glass card row">
+    <span class="pill pill-ok">ALLOW</span>
+    <span class="pill pill-info">INFO</span>
+    <span class="pill pill-warn">CHALLENGE</span>
+    <span class="pill pill-danger">FREEZE</span>
+    <span class="pill pill-critical">CRITICAL</span>
+    <span class="pill pill-violet">CACHED</span>
+  </div>
+
+  <div class="label h-sec">Buttons</div>
+  <div class="glass card row">
+    <button class="btn">Default</button>
+    <button class="btn btn-primary">Primary</button>
+    <button class="btn btn-ok">OK</button>
+    <button class="btn btn-danger">Danger</button>
+    <button class="btn btn-ghost">Ghost</button>
+    <button class="btn btn-sm">Small</button>
+    <button class="btn btn-lg">Large</button>
+    <button class="btn" disabled>Disabled</button>
+  </div>
+
+  <div class="label h-sec">Notes</div>
+  <div class="glass card stack">
+    <div class="note">Default note — reads as info.</div>
+    <div class="note note-ok">Resolved as a false positive; the case is now in the index.</div>
+    <div class="note note-warn">Step-up verification was requested.</div>
+    <div class="note note-danger">Card frozen and escalated to a human analyst.</div>
+  </div>
+
+  <div class="label h-sec">Cards, drill affordance and tables</div>
+  <div class="grid g2">
+    <div class="glass card card-click" data-drill="demo:1" data-drill-title="Demo">
+      <div class="label">Card-click</div>
+      <div class="stat-value">₹1,24,900</div>
+      <div class="stat-sub">Hover me — the “Why?” badge and the border must both be visible.</div>
+    </div>
+    <div class="glass card">
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr><th>Transaction</th><th>Merchant</th><th class="num">Amount</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">TXN-0a41c9</td><td>Blue Tokai Coffee</td><td class="num">420</td></tr>
+            <tr><td class="mono">TXN-77b201</td><td>IndiGo Airlines</td><td class="num">18,640</td></tr>
+            <tr><td class="mono">TXN-3fe8d0</td><td>Unknown — Lisbon</td><td class="num">96,000</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="label h-sec">Code block <span class="dim">— the light-mode contrast failure</span></div>
+  <pre class="code" id="g-code">score = 34 (velocity) + 22 (geo_impossible) + 18 (amount_z) = 74
+decision = CHALLENGE           # 74 is inside the 30..90 model band
+citations = [CASE-0117, CASE-0042]</pre>
+
+  <div class="label h-sec">Key/value, bar, checkrow</div>
+  <div class="grid g2">
+    <div class="glass card">
+      <dl class="kv">
+        <dt>Model</dt><dd class="mono">azure/genailab-maas-gpt-4.1</dd>
+        <dt>Latency p95</dt><dd>7,352 ms</dd>
+        <dt>Cost this run</dt><dd>$0.1724</dd>
+      </dl>
+      <div class="bar" style="margin-top:.8rem"><i style="width:72%"></i></div>
+    </div>
+    <div class="glass card">
+      <div class="checkrow"><span class="ic">✅</span><div><b>Two-factor enabled</b><div class="tiny dim">Verified 3 days ago</div></div></div>
+      <div class="checkrow"><span class="ic">⚠️</span><div><b>Password age</b><div class="tiny dim">213 days — consider rotating</div></div></div>
+      <div class="checkrow"><span class="ic">🚨</span><div><b>Travel notice</b><div class="tiny dim">None filed</div></div></div>
+    </div>
+  </div>
+
+  <div class="label h-sec">Form controls <span class="dim">— open the select in both themes</span></div>
+  <div class="glass card grid g2">
+    <div>
+      <label class="field"><span class="label">Text</span><input type="text" placeholder="Search merchants…"></label>
+      <label class="field"><span class="label">Password</span><input type="password" value="hunter2hunter2"></label>
+      <label class="field"><span class="label">Number</span><input type="number" value="14"></label>
+      <label class="field"><span class="label">Date</span><input type="date" value="2026-08-07"></label>
+    </div>
+    <div>
+      <label class="field"><span class="label">Select — the white-on-white bug</span>
+        <select id="g-select">
+          <option>All regions</option>
+          <option>Mumbai · Maharashtra</option>
+          <option selected>Bengaluru · Karnataka</option>
+          <option>Kochi · Kerala</option>
+          <option>Lisbon · Portugal</option>
+        </select>
+      </label>
+      <label class="field"><span class="label">Inline select (width:auto, as in the header)</span><br>
+        <select style="width:auto"><option>Priya Menon · CUST-0001</option><option>Arjun Rao · CUST-0002</option></select>
+      </label>
+      <label class="row small" style="margin-top:.5rem">
+        <input type="checkbox" checked style="width:auto"> <span>Allow model calls (raw checkbox)</span>
+      </label>
+      <div class="switch"><span class="small">Mask balances</span><input type="checkbox" checked></div>
+      <div class="switch"><span class="small">Offline cache</span><input type="checkbox"></div>
+      <label class="field" style="margin-top:.5rem"><span class="label">Textarea</span>
+        <textarea rows="2" placeholder="Analyst note…"></textarea></label>
+    </div>
+  </div>
+
+  <div class="label h-sec">Scroll region <span class="dim">— scrollbar must be themed</span></div>
+  <div class="glass card scroll-y" style="max-height:110px">
+    <div class="stack">
+      <div>Line one of a deliberately overflowing list.</div><div>Line two.</div><div>Line three.</div>
+      <div>Line four.</div><div>Line five.</div><div>Line six.</div><div>Line seven.</div><div>Line eight.</div>
+    </div>
+  </div>
+
+  <div class="label h-sec">Chat surfaces</div>
+  <div class="glass card" style="position:relative;min-height:150px;overflow:hidden;border-radius:var(--r)">
+    <div class="chat-head" style="margin:calc(-1 * var(--s-4)) calc(-1 * var(--s-4)) var(--s-3)">
+      <b>SentinelBank assistant</b><button class="x">&times;</button>
+    </div>
+    <div class="stack">
+      <div class="msg user">Freeze my card, it's been stolen.</div>
+      <div class="msg bot">Card ending <span class="mono">4821</span> is frozen. A replacement ships today.</div>
+      <div class="msg-notes"><span>🛡️ 2 PII fields tokenised · 0 guardrails tripped</span></div>
+      <div class="typing"><span></span><span></span><span></span></div>
+    </div>
+    <!-- position:static so it sits in the flow instead of floating over the page. It is here
+         because it is one of only five elements that consume --grad-a. -->
+    <button class="chat-fab" style="position:static;display:inline-grid;place-items:center">💬</button>
+  </div>
+
+  <div class="label h-sec">Toasts</div>
+  <div class="stack" style="max-width:380px">
+    <div class="toast"><div class="t-title">🔔 Notice filed</div><div class="t-body">Travel to Portugal, 12–26 Aug.</div></div>
+    <div class="toast ok"><div class="t-title">✅ Resolved</div><div class="t-body">Marked genuine; added to the index.</div></div>
+    <div class="toast warn"><div class="t-title">⚠️ Verification needed</div><div class="t-body">Confirm the ₹96,000 charge.</div></div>
+    <div class="toast danger"><div class="t-title">🚨 Card frozen</div><div class="t-body">Escalated to an analyst.</div></div>
+  </div>
+
+  <div class="label h-sec">Modal + scrim</div>
+  <div style="position:relative;height:290px;border-radius:var(--r);overflow:hidden;border:1px solid var(--line)">
+    <div class="card" style="padding:var(--s-4)">
+      <h3>Content behind the scrim</h3>
+      <p class="muted small">The scrim must dim this legibly in both themes — it was hardcoded dark.</p>
+      <div class="row"><span class="pill pill-danger">FREEZE</span><span class="pill pill-ok">ALLOW</span></div>
+    </div>
+    <div class="modal-host open" style="position:absolute">
+      <div class="modal" style="max-height:250px">
+        <div class="modal-head"><div><h3 style="margin:0">Why was this flagged?</h3>
+          <div class="tiny dim">TXN-3fe8d0</div></div><button class="x">&times;</button></div>
+        <div class="modal-body">
+          <div class="note note-warn">Geo-impossible: Bengaluru → Lisbon in 41 minutes.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="label h-sec">Login side panel</div>
+  <div class="glass login-card" style="min-height:150px">
+    <div class="login-side"><div class="brand"><span class="brand-mark">🛡️</span>
+      <span>Sentinel<span class="dim">Bank</span></span></div>
+      <p class="muted small" style="margin-top:.8rem">Gradient wash — needs a light value.</p></div>
+    <div class="login-form"><label class="field"><span class="label">Username</span>
+      <input type="text" placeholder="analyst"></label>
+      <button class="btn btn-primary btn-block">Sign in</button></div>
+  </div>
+
+  <!-- ------------------------------------------------------------------ charts -->
+  <div class="label h-sec">Gauge <span class="dim">— 50 and 51 straddle the large-arc break exactly</span></div>
+  <div class="glass card grid g3" id="g-gauges"></div>
+
+  <div class="label h-sec">Ring <span class="dim">— one per gradeColour band</span></div>
+  <div class="glass card grid g4" id="g-rings"></div>
+
+  <div class="label h-sec">Donut</div>
+  <div class="grid g3">
+    <div class="glass card"><div class="label">8+ slices — palette wraps past index 4</div><div id="g-donut-wrap"></div></div>
+    <div class="glass card"><div class="label">Explicit var() colours</div><div id="g-donut-var"></div></div>
+    <div class="glass card"><div class="label">Note appended after draw</div><div id="g-donut-note"></div></div>
+  </div>
+
+  <div class="label h-sec">Bars, stacked, area, heat, sparkline</div>
+  <div class="grid g2">
+    <div class="glass card"><div class="label">bars</div><div id="g-bars"></div></div>
+    <div class="glass card"><div class="label">stackedBars</div><div id="g-stacked"></div></div>
+  </div>
+  <div class="glass card" style="margin-top:.9rem"><div class="label">areaLine — barsToo + refs</div><div id="g-area"></div></div>
+  <div class="grid g2" style="margin-top:.9rem">
+    <div class="glass card"><div class="label">heatGrid</div><div id="g-heat"></div></div>
+    <div class="glass card"><div class="label">sparkline <span class="dim">(unused in the app — rendered so it cannot rot)</span></div>
+      <div id="g-spark" style="width:120px"></div></div>
+  </div>
+
+  <div style="height:2rem"></div>
+</div>
+
+<script src="js/charts.js"></script>
+<!-- The real app.js, so the toggle, the mask and the drill wiring are exercised rather
+     than mocked. body[data-poll="0"] keeps the notification poller from hitting a backend
+     that is not running here. -->
+<script src="js/app.js"></script>
+<script>
+(function () {
+  "use strict";
+  const isFrame = new URLSearchParams(location.search).has("frame");
+  document.getElementById(isFrame ? "h-gal" : "h-shell").hidden = false;
+  if (isFrame) { drawGallery(); } else { wireShell(); }
+
+  /* ------------------------------------------------------------------ gallery */
+  function drawGallery() {
+    /* Token swatches, read live off :root so a token that exists in only one theme shows up. */
+    const sw = document.getElementById("g-swatches");
+    ["--ok", "--info", "--warn", "--danger", "--critical", "--violet", "--accent",
+     "--ok-dim", "--info-dim", "--warn-dim", "--danger-dim", "--violet-dim",
+     "--glass-1", "--glass-2", "--glass-3", "--bg-0", "--bg-1", "--code-bg", "--scrim"]
+      .forEach(name => {
+        const d = document.createElement("div");
+        d.className = "h-sw mono";
+        d.style.background = `var(${name})`;
+        d.textContent = name;
+        sw.appendChild(d);
+      });
+
+    /* The whole point of these six values: 50 must render, 51 must not detach. */
+    const G = document.getElementById("g-gauges");
+    [[40, "grade C"], [50, "boundary"], [51, "WAS BROKEN"], [78, "grade B"], [92, "grade A"], [100, null]]
+      .forEach(([v, sub]) => {
+        const cell = document.createElement("div");
+        cell.className = "center";
+        cell.innerHTML = `<div class="tiny dim">${v}${sub ? " · " + sub : " · no sub"}</div>`;
+        const host = document.createElement("div");
+        host.style.width = "210px"; host.style.margin = ".3rem auto 0";
+        cell.appendChild(host); G.appendChild(cell);
+        SBCharts.gauge(host, v, sub ? { sub } : {});
+      });
+
+    const R = document.getElementById("g-rings");
+    const GRADE = { 45: "D", 60: "C", 80: "B", 95: "A" };
+    [45, 60, 80, 95].forEach(v => {
+      const cell = document.createElement("div");
+      cell.className = "center";
+      cell.innerHTML = `<div class="tiny dim">${v}</div>`;
+      const wrap = document.createElement("div");
+      wrap.className = "ring-wrap";
+      const host = document.createElement("div");
+      wrap.appendChild(host);
+      wrap.insertAdjacentHTML("beforeend",
+        `<div class="ring-center"><div><div class="ring-score">${v}</div>` +
+        `<div class="ring-max">GRADE ${GRADE[v]}</div></div></div>`);
+      cell.appendChild(wrap); R.appendChild(cell);
+      SBCharts.ring(host, v);
+    });
+
+    const CATS = [
+      { label: "Groceries", value: 18400 }, { label: "Travel", value: 42600 },
+      { label: "Dining", value: 9800 }, { label: "Fuel", value: 6200 },
+      { label: "Utilities", value: 5100 }, { label: "Health", value: 3900 },
+      { label: "Shopping", value: 12750 }, { label: "Education", value: 7300 },
+      { label: "Other", value: 2400 },
+    ];
+    SBCharts.donut(document.getElementById("g-donut-wrap"), CATS,
+      { centreLabel: "₹1.09L", centreSub: "this month" });
+
+    SBCharts.donut(document.getElementById("g-donut-var"), [
+      { label: "Confirmed fraud", value: 38, colour: "var(--danger)" },
+      { label: "False positives", value: 52, colour: "var(--ok)" },
+    ], { centreLabel: "90", centreSub: "cases" });
+
+    const noteHost = document.getElementById("g-donut-note");
+    SBCharts.donut(noteHost, [
+      { label: "Seeded", value: 51 }, { label: "Learned", value: 12 },
+    ]);
+    const note = document.createElement("div");     /* mirrors admin/knowledge.html:132-142 */
+    note.className = "note note-ok"; note.style.marginTop = ".7rem";
+    note.textContent = "Appended after the draw — a redraw would destroy this.";
+    noteHost.appendChild(note);
+
+    SBCharts.bars(document.getElementById("g-bars"), [
+      { label: "Mar", value: 74000 }, { label: "Apr", value: 91000 },
+      { label: "May", value: 62000 }, { label: "Jun", value: 108000 },
+      { label: "Jul", value: 87000 }, { label: "Aug", value: 41000 },
+    ], { height: 220 });
+
+    SBCharts.stackedBars(document.getElementById("g-stacked"), [
+      { label: "Maharashtra", total: 620, parts: [
+        { label: "Allowed", value: 540, colour: "var(--info)" },
+        { label: "Challenged", value: 58, colour: "var(--warn)" },
+        { label: "Frozen", value: 22, colour: "var(--danger)" }] },
+      { label: "Karnataka", total: 480, parts: [
+        { label: "Allowed", value: 431, colour: "var(--info)" },
+        { label: "Challenged", value: 37, colour: "var(--warn)" },
+        { label: "Frozen", value: 12, colour: "var(--danger)" }] },
+      { label: "Kerala", total: 300, parts: [
+        { label: "Allowed", value: 274, colour: "var(--info)", dim: true },
+        { label: "Challenged", value: 19, colour: "var(--warn)" },
+        { label: "Frozen", value: 7, colour: "var(--danger)" }] },
+    ], { height: 200 });
+
+    const days = Array.from({ length: 30 }, (_, i) => ({
+      label: String(i + 1),
+      value: Math.round(4000 + 3200 * Math.sin(i / 3.1) + 1500 * Math.cos(i / 1.7) + i * 90),
+      barValue: Math.round(2200 + 1800 * Math.abs(Math.sin(i / 2.3))),
+    }));
+    SBCharts.areaLine(document.getElementById("g-area"), { points: days }, {
+      barsToo: true, height: 260,
+      refs: [{ label: "Budget", value: 9000 }, { label: "Last month", value: 6200, colour: "var(--ok)" }],
+    });
+
+    const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const cells = [];
+    for (let r = 0; r < 12; r++) for (let c = 0; c < 7; c++) {
+      cells.push({ col: c, row: r, value: Math.round(Math.random() * 40),
+                   colLabel: DAYS[c], rowLabel: `-${11 - r}w` });
+    }
+    SBCharts.heatGrid(document.getElementById("g-heat"), cells, {
+      cols: 7, rows: 12, colLabels: DAYS,
+      rowLabels: Array.from({ length: 12 }, (_, i) => i === 11 ? "now" : `-${11 - i}w`),
+    });
+
+    SBCharts.sparkline(document.getElementById("g-spark"), [4, 9, 6, 11, 8, 14, 10, 17, 13, 19]);
+  }
+
+  /* -------------------------------------------------------------------- shell */
+  function wireShell() {
+    const frames = () => ["f-dark", "f-light", "f-system"]
+      .map(id => document.getElementById(id))
+      .filter(f => f && f.contentDocument)
+      .map(f => ({ id: id_(f), doc: f.contentDocument }));
+    const id_ = f => f.id.replace("f-", "");
+
+    document.getElementById("h-flip").addEventListener("click", () => {
+      frames().forEach(({ doc }) => {
+        const root = doc.documentElement;
+        const now = root.getAttribute("data-theme")
+          || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+        root.setAttribute("data-theme", now === "light" ? "dark" : "light");
+      });
+      log('<span class="h-warn">Flipped. Charts must recolour with NO re-animation — '
+        + 'bars must not regrow from zero, the area line must not redraw.</span>');
+    });
+
+    document.getElementById("h-assert").addEventListener("click", runAssertions);
+
+    /* Reload each frame's stylesheet with a fresh query string. Without this the browser
+       serves glass.css from cache and the assertions grade the PREVIOUS edit — which reads
+       as a real failure and sends you looking for a bug you already fixed. */
+    document.getElementById("h-reload").addEventListener("click", () => {
+      let n = 0;
+      ["f-dark", "f-light", "f-system"].forEach(id => {
+        const doc = document.getElementById(id).contentDocument;
+        if (!doc) return;
+        const link = doc.querySelector("link[rel=stylesheet]");
+        if (link) { link.href = link.href.split("?")[0] + "?cb=" + Date.now(); n++; }
+      });
+      log(`<span class="h-warn">Reloaded glass.css in ${n} frame(s). `
+        + `Charts still show the markup from the last full page load — reload the page `
+        + `itself to re-run charts.js.</span>`);
+    });
+  }
+
+  let OUT = [];
+  function log(html) {
+    OUT.push(html);
+    document.getElementById("h-out").innerHTML = OUT.join("\n");
+  }
+  function pass(m) { log(`<span class="h-pass">PASS</span>  ${m}`); }
+  function fail(m) { log(`<span class="h-fail">FAIL</span>  ${m}`); }
+  function warn(m) { log(`<span class="h-warn">WARN</span>  ${m}`); }
+  function head(m) { log(`\n<b>${m}</b>`); }
+
+  function paintOf(node, prop) {
+    const v = getComputedStyle(node)[prop];
+    return (v || "").trim();
+  }
+  function isBlack(v) { return /^rgba?\(\s*0\s*,\s*0\s*,\s*0\s*(,\s*1\s*)?\)$/.test(v); }
+
+  /* Only these actually put ink on the canvas. defs/linearGradient/stop/title inherit the
+     default fill:black but never paint, and a <line> has no interior so its fill is
+     meaningless -- counting either produces false failures that train you to ignore the
+     check, which is worse than not having it. */
+  const RENDERS = { rect:1, circle:1, ellipse:1, line:1, path:1, polygon:1, polyline:1, text:1, tspan:1 };
+
+  function blackPaints(doc) {
+    const bad = [];
+    doc.querySelectorAll(".chart *").forEach(n => {
+      const tag = n.tagName.toLowerCase();
+      if (!RENDERS[tag]) return;
+      const cs = getComputedStyle(n);
+      if (tag !== "line" && cs.fill !== "none" && isBlack(cs.fill)) bad.push(`<${tag} fill>`);
+      if (cs.stroke !== "none" && parseFloat(cs.strokeWidth) > 0 && isBlack(cs.stroke)) bad.push(`<${tag} stroke>`);
+    });
+    return bad;
+  }
+
+  /* A node worth probing for liveness: one whose paint is an actual colour. The area chart's
+     first path is filled with url(#grad...), which correctly never changes -- its gradient
+     stops are what recolour, so probe a stop instead. */
+  function livenessProbe(doc, sel) {
+    const nodes = [...doc.querySelectorAll(`${sel} .chart *`)];
+    for (const n of nodes) {
+      const tag = n.tagName.toLowerCase();
+      const cs = getComputedStyle(n);
+      if (tag === "stop") return n;
+      if (!RENDERS[tag]) continue;
+      if (/^rgb/.test(cs.stroke) && !isBlack(cs.stroke) && parseFloat(cs.strokeWidth) > 0) return n;
+      if (tag !== "line" && /^rgb/.test(cs.fill) && !isBlack(cs.fill)) return n;
+    }
+    return null;
+  }
+  function probeValue(n) {
+    const cs = getComputedStyle(n);
+    return n.tagName.toLowerCase() === "stop" ? cs.stopColor : cs.fill + "|" + cs.stroke;
+  }
+
+  function runAssertions() {
+    OUT = []; document.getElementById("h-out").innerHTML = "";
+    const fs = ["f-dark", "f-light"].map(id => ({
+      name: id.replace("f-", ""), doc: document.getElementById(id).contentDocument,
+    }));
+    if (fs.some(f => !f.doc || !f.doc.getElementById("g-gauges"))) {
+      fail("Frames are not loaded yet — reload the page and try again."); return;
+    }
+
+    /* 1. No black paint. The single highest-value check: an unresolvable var() in a paint
+       slot computes to rgb(0,0,0), so this catches every typo across the conversion. */
+    head("1. No black paint in any chart");
+    fs.forEach(({ name, doc }) => {
+      const bad = blackPaints(doc);
+      bad.length ? fail(`${name}: ${bad.length} black paint(s) — ${bad.slice(0, 4).join(", ")}`)
+                 : pass(`${name}: no black fill/stroke on any rendering node`);
+    });
+
+    /* 2. Liveness — sample one painted node per chart, flip, resample. */
+    head("2. Charts recolour on a theme flip (no redraw)");
+    const doc = fs[0].doc, root = doc.documentElement;
+    const probes = [];
+    ["#g-gauges", "#g-rings", "#g-donut-wrap", "#g-donut-var", "#g-bars",
+     "#g-stacked", "#g-area", "#g-heat", "#g-spark"].forEach(sel => {
+      const n = livenessProbe(doc, sel);
+      if (n) probes.push({ sel, n, before: probeValue(n) });
+      else warn(`${sel}: found no colour-painted node to probe`);
+    });
+    const was = root.getAttribute("data-theme");
+    root.setAttribute("data-theme", was === "light" ? "dark" : "light");
+    let moved = 0;
+    probes.forEach(p => {
+      if (probeValue(p.n) !== p.before) moved++;
+      else fail(`${p.sel} did not change (${p.before})`);
+    });
+    if (was) root.setAttribute("data-theme", was); else root.removeAttribute("data-theme");
+    moved === probes.length ? pass(`all ${probes.length} chart probes recoloured`)
+                            : fail(`${moved}/${probes.length} probes recoloured`);
+
+    /* 3. No stale literals left as presentation attributes. */
+    head("3. No hardcoded colour attributes survived the conversion");
+    fs.forEach(({ name, doc }) => {
+      const bad = [];
+      doc.querySelectorAll(".chart *").forEach(n => {
+        ["fill", "stroke", "stop-color"].forEach(a => {
+          const v = n.getAttribute(a);
+          if (v && /^(#|rgb)/i.test(v)) bad.push(`${n.tagName}@${a}=${v}`);
+        });
+      });
+      bad.length ? fail(`${name}: ${bad.length} literal(s) — ${bad.slice(0, 5).join(", ")}`)
+                 : pass(`${name}: every paint goes through a token`);
+    });
+
+    /* 4. Token completeness — a token defined in only one theme is the classic regression. */
+    head("4. Every :root token resolves in both themes");
+    const names = tokenNames(fs[0].doc);
+    log(`      ${names.length} custom properties declared`);
+    fs.forEach(({ name, doc }) => {
+      const cs = getComputedStyle(doc.documentElement);
+      const missing = names.filter(n => !cs.getPropertyValue(n).trim());
+      missing.length ? fail(`${name}: empty — ${missing.join(", ")}`)
+                     : pass(`${name}: all ${names.length} resolve`);
+    });
+
+    /* 5. Contrast. Validates the light hue choices rather than trusting them. */
+    head("5. WCAG contrast (target 4.5 for body text)");
+    fs.forEach(({ name, doc }) => {
+      const cs = getComputedStyle(doc.documentElement);
+      const bg0 = rgba(cs.getPropertyValue("--bg-0"), doc);
+      const bg1 = rgba(cs.getPropertyValue("--bg-1"), doc);
+      const glass = over(rgba(cs.getPropertyValue("--glass-1"), doc), bg0);
+      [["--ink", 4.5], ["--ink-2", 4.5], ["--ink-3", 3.0]].forEach(([tok, target]) => {
+        const fg = rgba(cs.getPropertyValue(tok), doc);
+        [["bg-0", bg0], ["bg-1", bg1], ["glass-1 over bg-0", glass]].forEach(([lbl, b]) => {
+          report(`${name} ${tok} on ${lbl}`, ratio(over(fg, b), b), target);
+        });
+      });
+      /* White/dark text sitting on the gradient buttons. */
+      gradStops(cs.getPropertyValue("--grad-a")).forEach((hex, i) =>
+        report(`${name} --on-accent on grad-a stop ${i + 1} (${hex})`,
+               ratio(rgba(cs.getPropertyValue("--on-accent") || "#fff", doc), rgba(hex, doc)), 4.5));
+      gradStops(cs.getPropertyValue("--grad-danger")).forEach((hex, i) =>
+        report(`${name} --on-accent on grad-danger stop ${i + 1} (${hex})`,
+               ratio(rgba(cs.getPropertyValue("--on-accent") || "#fff", doc), rgba(hex, doc)), 4.5));
+      gradStops(cs.getPropertyValue("--grad-b")).forEach((hex, i) =>
+        report(`${name} --on-ok on grad-b stop ${i + 1} (${hex})`,
+               ratio(rgba(cs.getPropertyValue("--on-ok") || "#04231a", doc), rgba(hex, doc)), 4.5));
+    });
+
+    /* 6. The light palette is written twice — once for the pinned attribute, once inside
+       the media query — because a selector list cannot straddle a media boundary. glass.css
+       says "EDIT BOTH"; this is what makes forgetting fail loudly instead of shipping a
+       theme that is correct only for people who clicked the toggle. */
+    head("6. The two light-palette blocks have not drifted");
+    (function () {
+      const sheet = [...fs[0].doc.styleSheets].find(s => (s.href || "").includes("glass.css"));
+      if (!sheet) { fail("glass.css not found"); return; }
+      const attrBlock = {}, mediaBlock = {};
+      (function walk(rs, inMedia) {
+        for (const r of rs) {
+          const sel = r.selectorText || "";
+          if (r.style && sel.includes('[data-theme="light"]')) collect(r, attrBlock);
+          if (r.style && inMedia && sel.includes(":not([data-theme])")) collect(r, mediaBlock);
+          if (r.cssRules && r.cssRules.length) {
+            walk(r.cssRules, inMedia || /prefers-color-scheme:\s*light/.test(r.conditionText || ""));
+          }
+        }
+      })(sheet.cssRules, false);
+      function collect(rule, into) {
+        for (const p of rule.style) into[p] = rule.style.getPropertyValue(p).trim();
+        into["color-scheme"] = rule.style.getPropertyValue("color-scheme").trim();
+      }
+      const a = Object.keys(attrBlock).sort(), m = Object.keys(mediaBlock).sort();
+      if (!a.length || !m.length) { fail(`block not found (attr=${a.length}, media=${m.length})`); return; }
+      const onlyAttr = a.filter(k => !(k in mediaBlock));
+      const onlyMedia = m.filter(k => !(k in attrBlock));
+      const differing = a.filter(k => k in mediaBlock && attrBlock[k] !== mediaBlock[k]);
+      if (onlyAttr.length) fail(`only in [data-theme="light"]: ${onlyAttr.join(", ")}`);
+      if (onlyMedia.length) fail(`only in the @media block: ${onlyMedia.join(", ")}`);
+      differing.forEach(k => fail(`${k} differs — "${attrBlock[k]}" vs "${mediaBlock[k]}"`));
+      if (!onlyAttr.length && !onlyMedia.length && !differing.length) {
+        pass(`both blocks declare the same ${a.length} properties with identical values`);
+      }
+    })();
+
+    head("Manual checks the harness cannot make");
+    log('      · open the <select> in each frame — options must be readable, not white-on-white');
+    log('      · hover a .card-click — border and the "Why?" badge must both be visible');
+    log('      · tab through the buttons — every focus ring must be visible');
+    log('      · press "Live-flip both frames" — nothing may re-animate');
+  }
+
+  function report(label, r, target) {
+    const s = r.toFixed(2) + ":1";
+    r >= target ? pass(`${label} — ${s}`) : fail(`${label} — ${s} (needs ${target})`);
+  }
+
+  /* Read the declared token names straight out of the stylesheet, so the list can never
+     drift from the CSS.
+     Note the rule order below: a CSSStyleRule in a nesting-capable engine also exposes an
+     (empty) .cssRules, so an early `if (r.cssRules) { recurse; continue; }` skips every
+     plain rule and silently returns nothing. Check .style first, then recurse only into
+     groups that actually have children. */
+  function tokenNames(doc) {
+    const out = new Set();
+    for (const sheet of doc.styleSheets) {
+      let rules; try { rules = sheet.cssRules; } catch (e) { continue; }
+      walk(rules);
+      function walk(rs) {
+        for (const r of rs) {
+          if (r.style && /:root/.test(r.selectorText || "")) {
+            for (const p of r.style) if (p.startsWith("--")) out.add(p);
+          }
+          if (r.cssRules && r.cssRules.length) walk(r.cssRules);
+        }
+      }
+    }
+    return [...out].sort();
+  }
+
+  /* Resolve any CSS colour to [r,g,b,a] by letting the browser do it. */
+  function rgba(value, doc) {
+    const probe = doc.createElement("span");
+    probe.style.color = "rgb(1,2,3)";
+    probe.style.color = String(value).trim();
+    doc.body.appendChild(probe);
+    const c = getComputedStyle(probe).color;
+    probe.remove();
+    const m = c.match(/[\d.]+/g) || [0, 0, 0, 1];
+    return [+m[0], +m[1], +m[2], m[3] === undefined ? 1 : +m[3]];
+  }
+  function over(fg, bg) {              /* alpha-composite fg onto an opaque bg */
+    const a = fg[3];
+    return [fg[0] * a + bg[0] * (1 - a), fg[1] * a + bg[1] * (1 - a), fg[2] * a + bg[2] * (1 - a), 1];
+  }
+  function lum(c) {
+    const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+  }
+  function ratio(a, b) {
+    const l1 = lum(a), l2 = lum(b);
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  }
+  function gradStops(g) { return (String(g).match(/#[0-9a-f]{3,8}\b/gi) || []); }
+})();
+</script>
+</body>
+</html>

@@ -126,15 +126,26 @@
      reads from contribution graphs. */
   const HEAT = {{ heat|tojson }};
   const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+  /* The column is the real weekday, so the row has to be the real week — offset by where
+     the first day falls in its week. It used to be Math.floor(i / 7), which only lines up
+     when HEAT[0] happens to be a Monday; on every other day of the week the first row was
+     short and every later row wrapped one column early, quietly plotting Tuesday's spend
+     under Monday. Row count comes from the data for the same reason: hardcoding 12 drops
+     the tail whenever the offset pushes the series into a 13th week. */
+  const OFFSET = HEAT.length ? (new Date(HEAT[0].day + "T00:00:00").getDay() + 6) % 7 : 0;
+  const ROWS = Math.max(1, Math.ceil((HEAT.length + OFFSET) / 7));
+
   const cells = HEAT.map((d, i) => {
     const date = new Date(d.day + "T00:00:00");
     const weekday = (date.getDay() + 6) % 7;             // Monday-first
-    return { col: weekday, row: Math.floor(i / 7), value: d.value,
+    return { col: weekday, row: Math.floor((i + OFFSET) / 7), value: d.value,
              colLabel: DAYS[weekday], rowLabel: d.day };
   });
   SBCharts.heatGrid(document.getElementById("heat"), cells, {
-    cols: 7, rows: 12, colLabels: DAYS,
-    rowLabels: Array.from({ length: 12 }, (_, i) => i === 11 ? "now" : `-${11 - i}w`),
+    cols: 7, rows: ROWS, colLabels: DAYS,
+    rowLabels: Array.from({ length: ROWS }, (_, i) =>
+      i === ROWS - 1 ? "now" : `-${ROWS - 1 - i}w`),
   });
 
   /* Strength scoring mirrors core/insights.password_strength so the browser and the

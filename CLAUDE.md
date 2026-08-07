@@ -178,6 +178,9 @@ blocked on an API key.** The whole app runs today with `DEMO_MODE=off` (rules on
 - [x] Clickable drill-downs on every figure — `GET /api/drill/<kind>/<key>`, 8 kinds
 - [x] Notifications wired: toast + centre + real `.eml` outbox on every action
 - [x] Agent action set completed — 14 tools incl. statement, travel budget, security review
+- [x] **Light/dark theme + UI fixes** (branch `ui/theme-toggle-and-polish`) — header toggle,
+      two first-class themes, gauge arc bug fixed, dropdowns readable.
+      QA page at `web/static/_harness.html` (see "The theme system" below)
 - [ ] **← NEXT: slide deck** (docs/ARCHITECTURE.md headings map to slides)
 - [ ] Demo rehearsed 3× under 10:00, screen recording captured
 - [ ] Re-run `python -m core.record_demo` after any prompt/scenario change
@@ -269,6 +272,67 @@ tight to push the 38-case evaluation harness through.
 Each one raises a toast, a row in the notification centre, and a **real `.eml`** in
 `data/outbox/` that opens in any mail client. Nothing is labelled delivered unless SMTP is
 configured (`SMTP_HOST` etc.) and the send succeeded — the UI says plainly when it is not.
+
+### The theme system
+
+Two first-class themes, not a dark theme with a fallback. Three rules decide which applies:
+
+```
+:root                                          -> dark (base, the only complete declaration)
+:root[data-theme="light"]                      -> light, pinned by the user
+@media light + :root:not([data-theme])         -> light, following the OS
+```
+
+No `[data-theme="dark"]` block exists — dark is the base, and a second copy would drift.
+`partials/theme_boot.html` sets the attribute **before the stylesheet loads** (so there is no
+flash) and is included in all three heads: `base.html`, `login.html`, `error.html`. It only
+writes the attribute when the user has actually chosen; absent means "keep following the OS",
+the same contract as `sb.maskBalance`.
+
+Three things to know before editing:
+
+- **The light palette is written twice** — once for `[data-theme="light"]`, once inside the
+  media query — because a selector list cannot straddle a media boundary. Both blocks say
+  `EDIT BOTH`, and `_harness.html` asserts they declare an identical property set, so
+  forgetting fails a test instead of shipping a theme that is only right for people who
+  clicked the toggle.
+- **No rule below the token blocks may contain a colour literal.** 25 of them used to. A
+  derived `rgb(var(--x-rgb) / .16)` is fine; a raw `rgba(99,102,241,.16)` is not, because it
+  silently stops following the theme. The only exceptions are the `@media print` block
+  (paper is white) and the email-preview iframe in `customer/email_view.html`.
+- **Charts recolour with no redraw.** `charts.js` emits `var(--token, fallback)` rather than
+  resolving colours at draw time, so a theme flip repaints every chart without replaying the
+  entry animations. The fallback is mandatory: an unresolvable `var()` in a paint slot
+  computes to **black**, not to a sensible default.
+
+**`web/static/_harness.html` is the QA surface.** It renders every component and every chart
+type in both themes side by side, and runs six assertions — no black paint, charts recolour
+live, no colour literal survived, every token resolves in both themes, WCAG contrast, and the
+light-block drift check. It needs no backend:
+
+```bash
+python3 -m http.server 8765 --directory web/static   # then open /_harness.html
+```
+
+Press **Reload CSS** before **Run assertions** after editing `glass.css`, or the browser
+grades the cached copy.
+
+**Both themes clear WCAG AA at every gradient stop.** `--grad-a` and `--grad-danger` carry
+white text on `.btn-primary`, `.btn-danger` and `.msg.user` at 700-weight `.86rem` — normal
+text by WCAG's definition, not large — so each stop needs 4.5:1 on its own:
+
+| | dark was | dark now | light |
+|---|---|---|---|
+| `--grad-a` | 4.47 / 4.23 / **2.43** | 5.34 / 4.77 / 5.36 | 7.90 / 7.10 / 5.36 |
+| `--grad-danger` | 3.67 / **2.80** | 4.70 / 5.18 | 6.29 / 5.18 |
+
+The dark stops are the brightest shade of each hue that still passes, so dark stays more
+vibrant than light at indigo and violet. Cyan and orange had no headroom, which is why both
+themes land on `#0e7490` and `#c2410c` — the bright cyan end of the old brand gradient could
+not survive white text at any usable shade. `--grad-b` is exempt: it carries the near-black
+`--on-ok`, so it wants a bright background and measures 6.86 / 8.67.
+
+Assertion 5 in the harness reports all of these, so brightening a stop back fails a test.
 
 ### Three bugs the browser walkthrough caught that CLI tests could not
 
