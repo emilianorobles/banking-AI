@@ -508,6 +508,27 @@ Assertion 5 in the harness reports all of these, so brightening a stop back fail
     trustworthy in one direction, but that is the direction needed — and says *"unreachable
     even though the connection is up"* when online.
 
+    **The cause, measured rather than guessed: `aiproxy.tcs.in` re-signs `www.google.com`.**
+    The same TLS-inspecting middlebox that forces `verify=False` on the LLM client. Ordinary
+    HTTPS survives it — `/generate_204` returns 204, and the speech endpoints themselves
+    answer 400/404, i.e. the *route* is open — but Chrome's recognition is a long-lived
+    streaming upload, and that does not survive interception. So the cloud speech path
+    **cannot work on the TCS network**, and no amount of retry logic changes that.
+
+    The fix is to stop using the cloud. **Chrome 138+ can recognise on-device**:
+    `SpeechRecognition.available({langs, processLocally: true})` reports it, `.install()`
+    fetches the model once over ordinary HTTPS (which this network allows), and
+    `instance.processLocally = true` keeps the audio on the machine. That bypasses the proxy
+    *and* works with the wifi off — strictly better here than the cloud path ever was, and a
+    much better story for a demo whose thesis is offline survival.
+
+    It is probed **only after the cloud path has failed**, never at load, and the result is
+    cached in `localStorage`. `available()` is young enough to crash the renderer on some
+    Chromium builds — Claude's embedded browser is one — and **a renderer crash cannot be
+    caught**, so it must never run unprompted. Same reason the diagnostic page puts it
+    behind its own button and says so. On a normal network nothing changes: no probe, no
+    delay, no new failure mode.
+
     `web/static/_voice_check.html` is the diagnostic, and it exists because **none of the
     five causes behind that one error string are visible from the server**: browser build,
     secure context, mic permission, the browser's own route out, and the raw error with its

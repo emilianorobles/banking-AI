@@ -74,9 +74,15 @@
 
   <div class="row">
     <button class="go" id="run">Run diagnostics</button>
+    <button id="od">Check on-device speech</button>
     <button id="copy" disabled>Copy report</button>
     <span class="d" style="color:var(--dim)">The microphone test will ask for permission.</span>
   </div>
+  <p class="d" style="color:var(--dim);margin:-.75rem 0 1.25rem">
+    <b>Check on-device speech</b> is separate because the API behind it crashes the tab on
+    some Chromium builds. If this page vanishes when you press it, that <em>is</em> the
+    answer: no on-device speech in this browser.
+  </p>
 
   <div id="out"></div>
   <div id="verdict" class="hidden"></div>
@@ -223,6 +229,55 @@
               "network down. This half of voice mode is not affected by the error you saw."
             : "Replies will not be spoken.");
     return !!SR;
+  }
+
+  /* Chrome 138+ can recognise locally. On a TLS-inspected network this is not a nicety --
+     it is the only dictation that can work at all, because the proxy breaks the streaming
+     cloud channel while leaving ordinary HTTPS intact.
+
+     Kept behind its own button. available() crashes the renderer on some Chromium builds
+     (Claude's embedded browser is one), a renderer crash cannot be caught, and a diagnostic
+     that takes the page down with it is worse than one that asks first. */
+  async function checkOnDevice() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR || typeof SR.available !== "function") {
+      add("od", "warn", "On-device recognition: not supported",
+          "No <code>SpeechRecognition.available()</code>. Needs Chrome 138 or newer — " +
+          "below that, recognition is cloud-only and an inspecting proxy will break it.");
+      return "unavailable";
+    }
+    add("od", "run", "On-device recognition…", "Asking which languages are installed.");
+    const seen = [];
+    let best = "unavailable", bestLang = "";
+    for (const lang of ["en-US", "en-GB"]) {
+      let state;
+      try {
+        state = await Promise.race([
+          SR.available({ langs: [lang], processLocally: true }),
+          new Promise(r => setTimeout(() => r("<timed out>"), 6000)),
+        ]);
+      } catch (e) { state = "threw: " + e.name; }
+      state = String(state);
+      seen.push("<code>" + esc(lang) + "</code> → " + esc(state));
+      if (state === "available" && best !== "available") { best = "available"; bestLang = lang; }
+      else if ((state === "downloadable" || state === "downloading") && best === "unavailable") {
+        best = "downloadable"; bestLang = lang;
+      }
+    }
+    const copy = {
+      available: ["ok", "Installed and ready. The assistant will use it automatically once " +
+                  "the cloud path fails once — audio never leaves the machine, and it works " +
+                  "with the network off entirely."],
+      downloadable: ["warn", "Supported but <b>not installed</b>. Chrome will fetch the model " +
+                     "on first use — a one-time download over ordinary HTTPS, which this " +
+                     "network allows. The assistant offers an <b>Install it</b> button when " +
+                     "the cloud path fails."],
+      unavailable: ["bad", "Not available for these languages. Dictation here is cloud-only, " +
+                    "so an inspecting proxy or the wifi being off will stop it."],
+    }[best];
+    add("od", copy[0], "On-device recognition: " + best + (bestLang ? " (" + bestLang + ")" : ""),
+        seen.join(" · ") + "<br>" + copy[1]);
+    return best;
   }
 
   async function checkPermission() {
@@ -415,13 +470,18 @@
             ? "That is too fast to be a timeout — something is refusing the connection " +
               "outright rather than dropping it."
             : "Slow enough to be a genuine timeout on the speech endpoint."),
-          "Most likely a corporate proxy or TLS-inspecting firewall. General browsing is " +
-          "allowed through it, but the speech endpoint is not — which is exactly the shape " +
-          "of network this project already works around for the LLM endpoint.",
-          "Test on a phone hotspot. If it works there, it is the network, and nothing in " +
-          "the app can fix it.",
-          "Also worth ruling out: an ad-blocking or privacy extension, and Chrome’s " +
-          "<i>Settings → Privacy → Search and browsing</i> voice controls.",
+          "<b>On this network it is the proxy.</b> <code>aiproxy.tcs.in</code> re-signs " +
+          "<code>www.google.com</code> — measured from the machine, not guessed. Ordinary " +
+          "HTTPS survives that, which is why browsing works and the check above passed, " +
+          "but the speech channel is a long-lived streaming upload and does not. It is the " +
+          "same middlebox that forces <code>verify=False</code> on the LLM client.",
+          "<b>The fix is to stop using the cloud.</b> Press <b>Check on-device speech</b> " +
+          "above. Chrome 138+ can recognise locally, which bypasses the proxy completely " +
+          "and keeps working with the wifi off — strictly better here than the cloud path " +
+          "ever was.",
+          "If on-device is unavailable, nothing in the app can fix this: test on a phone " +
+          "hotspot to confirm it is the network, and use <b>Win + H</b> (Windows dictation, " +
+          "on-device) into the chat box as the manual fallback.",
           "<b>For the demo:</b> dictation is the only part that needs the cloud. Spoken " +
           "replies and every other beat work offline — do not put dictation on the " +
           "critical path.",
@@ -480,6 +540,13 @@
     document.getElementById("copy").disabled = false;
     this.disabled = false;
     this.textContent = "Run again";
+  });
+
+  document.getElementById("od").addEventListener("click", async function () {
+    this.disabled = true;
+    await checkOnDevice();
+    this.disabled = false;
+    this.textContent = "Re-check on-device speech";
   });
 
   document.getElementById("copy").addEventListener("click", function () {

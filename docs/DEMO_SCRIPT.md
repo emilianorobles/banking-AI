@@ -283,14 +283,22 @@ and fits on a screen."
 confirm. You can't POST past it. That's also why the voice mode won't accept a spoken 'yes' —
 a misheard word must not be able to freeze a card."
 
-> ⚠️ **Do not put dictation on the critical path.** It is the one feature here that
-> genuinely needs the cloud — every browser's speech recognition streams audio to a vendor
-> service, so it dies with the wifi and it dies behind a proxy that blocks the endpoint.
-> Spoken *replies* are synthesised on the device and survive both. Check it on the demo
-> machine, in the demo browser, on the demo network, at
-> `/static/_voice_check.html` — and if it fails there, type instead and say nothing about
-> it. Note the checker needs **Chrome or Edge proper**: a bare Chromium build ships without
-> the speech API key and fails no matter how good the connection is.
+> ⚠️ **Do not put dictation on the critical path — and on the TCS network, expect the
+> cloud path to fail.** `aiproxy.tcs.in` re-signs `www.google.com`, which breaks Chrome's
+> streaming speech channel while leaving ordinary browsing intact. Spoken *replies* are
+> synthesised on the device and are unaffected.
+>
+> **Do this once, before the demo, in the browser you will present from:** open
+> `/static/_voice_check.html`, press **Check on-device speech**, and press **Install it** if
+> offered. Chrome 138+ recognises locally, which bypasses the proxy entirely and keeps
+> working with the wifi off. Once installed, the assistant picks it up by itself.
+>
+> If on-device is unavailable, type instead and say nothing about it — or use **Win + H**,
+> Windows' own on-device dictation, into the chat box. The checker needs **Chrome or Edge
+> proper**: a bare Chromium build ships without the speech API key and fails regardless.
+>
+> If it *does* work on-device, it is worth one sentence on stage: *"even the dictation runs
+> locally — nothing about this demo needs the network."*
 
 ---
 

@@ -32,6 +32,11 @@
  * proxy refusing the speech endpoint on a connection that is otherwise fine, which is the
  * likelier reading on a corporate network. Ask navigator.onLine before blaming the wifi,
  * and send anyone who wants the real answer to /static/_voice_check.html.
+ *
+ * And on this network it IS the proxy: aiproxy.tcs.in re-signs www.google.com, which breaks
+ * the streaming speech channel while leaving ordinary browsing intact. So the cloud path
+ * cannot be relied on here -- hence the on-device path below, which is the one form of
+ * dictation that survives both an inspecting proxy and the wifi being off.
  */
 (function (global) {
   "use strict";
@@ -57,19 +62,57 @@
     let rec = null;
     let retriedSilence = false;
 
+    /* ── ON-DEVICE RECOGNITION ─────────────────────────────────────────────────────
+       Chrome 138+ can run recognition locally: SpeechRecognition.available() reports it,
+       .install() fetches the model once, and instance.processLocally = true keeps the audio
+       on the machine. That matters here beyond privacy -- it is the ONLY dictation that
+       survives this network, where a TLS-inspecting proxy re-signs www.google.com and
+       breaks the cloud speech channel, and the only one that survives the wifi being off.
+
+       It is probed only AFTER the cloud path has failed, never at load. available() is
+       young enough that some Chromium builds crash the renderer on it (Claude's embedded
+       browser does), and a crash cannot be caught -- so it must never run unprompted, and
+       never during a demo beat that did not already need it. Once discovered it is
+       remembered in localStorage, so the cost is paid at most once per browser. */
+    const OD_KEY = "sb.voiceOnDevice";
+    let onDevice = null;        /* null = unprobed · "available" | "downloadable" | "unavailable" */
+    let odLang = "";
+    try {
+      const saved = localStorage.getItem(OD_KEY);
+      if (saved) { onDevice = "available"; odLang = saved; }
+    } catch (e) { /* storage disabled; probe again next failure */ }
+
+    /* On-device models are per-language and a bare "en" matches none of them. */
+    function langs() {
+      const l = document.documentElement.lang || "";
+      return [...new Set([l.includes("-") ? l : "", "en-US", "en-GB"].filter(Boolean))];
+    }
+    function recLang() { return odLang || langs()[0]; }
+
     /* navigator.onLine is only trustworthy in one direction -- false really does mean no
        route, true means "a network exists", not "the internet answers". That asymmetry is
        exactly what is needed here: it is enough to stop us blaming the wifi wrongly. */
     function offline() { return "onLine" in navigator && !navigator.onLine; }
 
     /* ------------------------------------------------------------------ ui */
-    function say(message, tone) {
+    /* `action` adds a button after the text. The install offer needs one -- a note telling
+       someone to run a download they have no way to start is not an instruction. */
+    function say(message, tone, action) {
       if (!note) return;
       note.textContent = message || "";
       note.className = "tiny " + (tone === "warn" ? "" : "dim") +
                        (message ? "" : " hidden");
       if (tone === "warn") note.style.color = "var(--warn)";
       else note.style.removeProperty("color");
+      if (action) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn btn-sm";
+        b.style.marginLeft = ".4rem";
+        b.textContent = action.label;
+        b.addEventListener("click", action.run);
+        note.appendChild(b);
+      }
     }
 
     function paintMic() {
@@ -153,12 +196,99 @@
 
     function hush() { if (TTS) TTS.cancel(); }
 
+    /* ------------------------------------------------------- on-device probe */
+    /* Never throws and never hangs. Both matter: this runs on a failure path, where a
+       second failure would replace a wrong answer with no answer at all. */
+    async function probeOnDevice() {
+      if (onDevice !== null) return onDevice;
+      onDevice = "unavailable";
+      if (!SR || typeof SR.available !== "function") return onDevice;
+      for (const lang of langs()) {
+        let state;
+        try {
+          state = await Promise.race([
+            SR.available({ langs: [lang], processLocally: true }),
+            new Promise(res => setTimeout(() => res("unavailable"), 4000)),
+          ]);
+        } catch (e) { state = "unavailable"; }
+        state = String(state || "unavailable");
+        /* "downloading" is someone else's install already in flight -- treat it as
+           downloadable so we offer to wait rather than declaring defeat. */
+        if (state === "available") { onDevice = "available"; odLang = lang; break; }
+        if (state === "downloadable" || state === "downloading") {
+          onDevice = "downloadable";
+          if (!odLang) odLang = lang;
+        }
+      }
+      if (onDevice === "available") {
+        try { localStorage.setItem(OD_KEY, odLang); } catch (e) { /* not essential */ }
+      }
+      return onDevice;
+    }
+
+    async function installOnDevice() {
+      if (!SR || typeof SR.install !== "function") return false;
+      say("Downloading the on-device speech model. This happens once, and then dictation " +
+          "works with no network at all.");
+      try {
+        const ok = await SR.install({ langs: [odLang || langs()[0]], processLocally: true });
+        if (ok) {
+          onDevice = "available";
+          try { localStorage.setItem(OD_KEY, odLang || langs()[0]); } catch (e) { /* fine */ }
+          netFails = 0;
+          say("On-device dictation is ready — audio stays on this machine.");
+          rec = null;                       /* rebuild with processLocally set */
+          start(true);
+          return true;
+        }
+      } catch (e) { /* fall through to the honest message */ }
+      onDevice = "unavailable";
+      say("The speech model could not be downloaded. Typing still works.", "warn");
+      return false;
+    }
+
+    /* The cloud failed. Probe for a local model and, if there is one, go straight back to
+       listening -- that is a different transport, not a retry of the thing that just
+       failed, so it does not risk the spin the sttDead flag exists to prevent. */
+    async function tryOnDevice() {
+      const state = await probeOnDevice();
+      if (state === "available") {
+        rec = null;                         /* rebuild with processLocally set */
+        say("Using on-device speech — no network needed.");
+        start(true);
+        return;
+      }
+      offerLocalOrExplain();
+    }
+
+    function offerLocalOrExplain() {
+      if (onDevice === "downloadable") {
+        say("This browser can dictate without the network, but the speech model is not " +
+            "installed yet.", "warn",
+            { label: "Install it", run: installOnDevice });
+        return;
+      }
+      if (offline()) {
+        say("Speech recognition needs an internet connection, and this browser has no " +
+            "on-device model. Typing and spoken replies still work.");
+        return;
+      }
+      /* Online, and still refused. Blaming the wifi here would send someone to fix the
+         wrong thing -- on this network the likelier answer is the inspecting proxy. */
+      say("The speech service is unreachable even though the connection is up — usually a " +
+          "proxy or the browser. Diagnose it at /static/_voice_check.html. Typing still " +
+          "works.", "warn");
+    }
+
     /* ----------------------------------------------------------------- stt */
     function build() {
       const r = new SR();
       r.continuous = false;
       r.interimResults = true;      /* the user sees what was heard before it is sent */
-      r.lang = document.documentElement.lang || "en-GB";
+      r.lang = recLang();
+      /* Only once the model is known to be present. Asking for local processing without it
+         fails, and it would fail as `network` -- the very error we are trying to get out of. */
+      if (onDevice === "available" && "processLocally" in r) r.processLocally = true;
 
       let finalText = "";
 
@@ -189,19 +319,20 @@
                the wifi off this is expected, not a failure. */
             sttDead = true;
             netFails += 1;
-            if (netFails === 1) {
-              say("Couldn't reach the speech service. Click the mic to try again — " +
-                  "typing always works.");
-            } else if (offline()) {
-              say("Speech recognition needs an internet connection: dictation is the one " +
-                  "part of this that cannot work offline. Typing and spoken replies still " +
-                  "work.");
+            if (onDevice === "available") {
+              /* Already local and still a network error: the model is gone, or the flag
+                 did not take. Forget the cached answer so the next click re-probes rather
+                 than retrying something that has stopped working. */
+              onDevice = null;
+              try { localStorage.removeItem(OD_KEY); } catch (e) { /* fine */ }
+              rec = null;
+              say("On-device dictation stopped working. Click the mic to re-check.");
+            } else if (netFails === 1) {
+              say("Couldn't reach the speech service — checking whether this browser can " +
+                  "do it on-device instead…");
+              tryOnDevice();
             } else {
-              /* Online, and still refused. Blaming the wifi here would send someone to
-                 fix the wrong thing -- on this network the likelier answer is a proxy. */
-              say("The speech service is unreachable even though the connection is up — " +
-                  "usually a proxy or the browser. Diagnose it at /static/_voice_check.html. " +
-                  "Typing still works.", "warn");
+              offerLocalOrExplain();
             }
             break;
           case "not-allowed":
@@ -336,9 +467,10 @@
       });
     });
 
-    global.SBVoice = { speakable, speak, start, stop,
+    global.SBVoice = { speakable, speak, start, stop, probeOnDevice, installOnDevice,
                        get voiceMode() { return voiceMode; },
                        get available() { return !!SR && !sttBlocked; },
-                       get healthy() { return !!SR && !sttBlocked && !sttDead; } };
+                       get healthy() { return !!SR && !sttBlocked && !sttDead; },
+                       get onDevice() { return onDevice; } };
   });
 })(window);
