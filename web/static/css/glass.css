@@ -1,10 +1,41 @@
 /* SentinelBank design system.
    One stylesheet, no framework, no web fonts, no CDN — the demo has to survive with the
    wifi switched off, and a missing stylesheet is a worse failure than a plain one.
-   Dark-first with a light-mode fallback, because we cannot control the laptop's theme. */
+
+   Two first-class themes. Dark is the base declaration and the only complete one; light
+   overrides a subset. Both are reachable three ways:
+
+     :root                        -> dark
+     :root[data-theme="light"]    -> light, pinned by the user
+     @media light + :not([data-theme]) -> light, following the OS
+
+   The media query is scoped to :not([data-theme]) so an explicit choice always wins and
+   "no choice" keeps following the system. There is deliberately NO [data-theme="dark"]
+   block: dark is already the base, and a second copy would drift from it.
+
+   Rule of the file: no rule below the token blocks may contain a colour literal. If you
+   need a new colour, add a token. Everything visible has to flip with the theme, and a
+   hardcoded rgba() is how that silently stops being true. */
 
 /* ---------------------------------------------------------------- tokens -- */
 :root {
+  /* Hue primitives, space-separated so every tint is derived rather than authored twice.
+     This is the part that keeps the themes honest: a hue changes in exactly one place, and
+     its dim fill and pill border follow automatically. */
+  --ok-rgb:       52 211 153;
+  --info-rgb:     96 165 250;
+  --warn-rgb:    251 191  36;
+  --danger-rgb:  248 113 113;
+  --critical-rgb:251 113 133;
+  --violet-rgb:  167 139 250;
+  --accent-rgb:   99 102 241;
+  --cyan-rgb:     34 211 238;
+  --pink-rgb:    244 114 182;
+  --lime-rgb:    163 230  53;
+
+  --dim-a: .14;         /* fill alpha for pills and notes */
+  --pill-line-a: .30;   /* border alpha for pills */
+
   /* surface + ink */
   --bg-0: #070b14;
   --bg-1: #0b1120;
@@ -13,6 +44,12 @@
   --ink-3: rgba(232, 237, 247, .48);
   --line: rgba(255, 255, 255, .10);
   --line-2: rgba(255, 255, 255, .06);
+  --hover-line: rgba(255, 255, 255, .20);
+  /* Button outline. Same as --line in dark, where a white edge on a dark surface separates
+     on its own. Light needs far more: a near-white button on a near-white card left the
+     border at 1.28:1, well under the 3:1 WCAG 1.4.11 asks for a control boundary, so the
+     button was legible but you could not see where it was. */
+  --btn-line: rgba(255, 255, 255, .10);
 
   /* glass */
   --glass-1: rgba(255, 255, 255, .045);
@@ -20,24 +57,69 @@
   --glass-3: rgba(255, 255, 255, .11);
   --blur: 18px;
 
-  /* semantic */
-  --ok: #34d399;
-  --info: #60a5fa;
-  --warn: #fbbf24;
-  --danger: #f87171;
-  --critical: #fb7185;
-  --violet: #a78bfa;
+  /* semantic — derived from the primitives above */
+  --ok:       rgb(var(--ok-rgb));
+  --info:     rgb(var(--info-rgb));
+  --warn:     rgb(var(--warn-rgb));
+  --danger:   rgb(var(--danger-rgb));
+  --critical: rgb(var(--critical-rgb));
+  --violet:   rgb(var(--violet-rgb));
+  --accent:   rgb(var(--accent-rgb));
+  --cyan:     rgb(var(--cyan-rgb));
+  --pink:     rgb(var(--pink-rgb));
+  --lime:     rgb(var(--lime-rgb));
 
-  --ok-dim: rgba(52, 211, 153, .14);
-  --info-dim: rgba(96, 165, 250, .14);
-  --warn-dim: rgba(251, 191, 36, .14);
-  --danger-dim: rgba(248, 113, 113, .14);
-  --violet-dim: rgba(167, 139, 250, .14);
+  --ok-dim:       rgb(var(--ok-rgb)       / var(--dim-a));
+  --info-dim:     rgb(var(--info-rgb)     / var(--dim-a));
+  --warn-dim:     rgb(var(--warn-rgb)     / var(--dim-a));
+  --danger-dim:   rgb(var(--danger-rgb)   / var(--dim-a));
+  --critical-dim: rgb(var(--critical-rgb) / var(--dim-a));
+  --violet-dim:   rgb(var(--violet-rgb)   / var(--dim-a));
 
-  /* accents */
-  --grad-a: linear-gradient(135deg, #6366f1, #8b5cf6 45%, #06b6d4);
+  --ok-line:       rgb(var(--ok-rgb)       / var(--pill-line-a));
+  --info-line:     rgb(var(--info-rgb)     / var(--pill-line-a));
+  --warn-line:     rgb(var(--warn-rgb)     / var(--pill-line-a));
+  --danger-line:   rgb(var(--danger-rgb)   / var(--pill-line-a));
+  --critical-line: rgb(var(--critical-rgb) / var(--pill-line-a));
+  --violet-line:   rgb(var(--violet-rgb)   / var(--pill-line-a));
+
+  /* accent — the indigo that used to be seven separate hardcoded rgba(99,102,241,…) */
+  --accent-edge:     rgb(var(--accent-rgb) / .6);
+  --accent-ring:     rgb(var(--accent-rgb) / .18);
+  --accent-glow-sm:  0 6px 18px  rgb(var(--accent-rgb) / .40);
+  --accent-glow:     0 8px 22px  rgb(var(--accent-rgb) / .35);
+  --accent-glow-lg:  0 12px 34px rgb(var(--accent-rgb) / .50);
+  --on-accent: #fff;      /* text on --grad-a / --grad-danger */
+  --on-ok: #04231a;       /* text on --grad-b */
+
+  /* Gradients. --grad-a and --grad-danger carry --on-accent (white) on .btn-primary,
+     .btn-danger and .msg.user at 700-weight .86rem, which is NOT WCAG "large text" (that
+     needs >=18.66px bold), so EVERY stop has to clear 4.5:1 against white on its own.
+     Measured: 5.34 / 4.77 / 5.36 and 4.70 / 5.18. These are the brightest shade of each hue
+     that still passes -- the old #6366f1/#8b5cf6/#06b6d4 came in at 4.47/4.23/2.43 and
+     #f43f5e/#f97316 at 3.67/2.80. The cyan and orange ends had no headroom at all, which is
+     why they land on the same values light uses. Do not brighten these back without
+     re-running the harness contrast report.
+     --grad-b is exempt: it carries --on-ok, which is near-black, so it wants a BRIGHT
+     background and already measures 6.86 / 8.67. */
+  --grad-a: linear-gradient(135deg, #5b55ea, #8250f4 45%, #0e7490);
   --grad-b: linear-gradient(135deg, #06b6d4, #34d399);
-  --grad-danger: linear-gradient(135deg, #f43f5e, #f97316);
+  --grad-danger: linear-gradient(135deg, #e11d48, #c2410c);
+
+  /* atmosphere */
+  --page-bloom-a: rgba(99, 102, 241, .20);
+  --page-bloom-b: rgba(6, 182, 212, .14);
+  --page-bloom-c: rgba(167, 139, 250, .12);
+  --hero-wash: linear-gradient(120deg, rgba(99,102,241,.24), rgba(139,92,246,.14) 45%, rgba(6,182,212,.14));
+  --login-wash: linear-gradient(150deg, rgba(99,102,241,.2), rgba(6,182,212,.12));
+  --bloom: rgba(255, 255, 255, .10);
+
+  /* chrome */
+  --scrim: rgba(3, 6, 14, .68);
+  --code-bg: rgba(0, 0, 0, .32);
+  /* Opaque on purpose — see the comment on the select rule. */
+  --select-bg: #121a2c;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23e8edf7' stroke-opacity='.65' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 
   /* scale */
   --r-sm: 10px; --r: 16px; --r-lg: 22px; --r-full: 999px;
@@ -51,14 +133,140 @@
   color-scheme: dark;
 }
 
+/* ===== LIGHT PALETTE — BLOCK 1 of 2 ==========================================
+   This block and the @media copy at the bottom of the token section MUST declare the
+   same properties. They cannot be merged: one is media-gated and the other is not, and
+   a selector list cannot straddle that boundary. Rather than resolve the OS preference
+   in JavaScript (which would make the whole palette JS-dependent, in an app whose stated
+   design goal is surviving a hostile environment), the list is duplicated and the
+   duplication is *checked* — _harness.html asserts the two blocks declare an identical
+   property set, so drift fails a test instead of shipping.
+   EDIT BOTH. The harness will tell you if you forget.
+
+   Accent hues are darker than their dark-mode counterparts because they carry white text
+   at 700-weight .86rem, which is NOT WCAG "large text" (that needs >=18.66px bold), so
+   every gradient stop has to clear 4.5:1 against white on its own. The old #6366f1 was
+   4.05:1 and failed; #06b6d4 was 2.2:1. */
+:root[data-theme="light"] {
+  --ok-rgb:        5 150 105;
+  --info-rgb:     37  99 235;
+  --warn-rgb:    180  83   9;
+  --danger-rgb:  220  38  38;
+  --critical-rgb:190  18  60;
+  --violet-rgb:  124  58 237;
+  --accent-rgb:   79  70 229;
+  --cyan-rgb:      8 145 178;
+  --pink-rgb:    219  39 119;
+  --lime-rgb:     77 124  15;
+
+  --dim-a: .12;
+  --pill-line-a: .38;
+
+  --bg-0: #eef2f9;
+  --bg-1: #f7f9fd;
+  --ink: #0f172a;
+  --ink-2: rgba(15, 23, 42, .74);
+  --ink-3: rgba(15, 23, 42, .50);
+  --line: rgba(15, 23, 42, .12);
+  --line-2: rgba(15, 23, 42, .07);
+  --hover-line: rgb(var(--accent-rgb) / .35);
+  --btn-line: rgba(15, 23, 42, .48);   /* 3.2:1 against the card — see the dark block */
+
+  --glass-1: rgba(255, 255, 255, .60);
+  --glass-2: rgba(255, 255, 255, .78);
+  --glass-3: rgba(255, 255, 255, .90);
+
+  --accent-glow-sm:  0 6px 18px  rgb(var(--accent-rgb) / .22);
+  --accent-glow:     0 8px 22px  rgb(var(--accent-rgb) / .20);
+  --accent-glow-lg:  0 12px 34px rgb(var(--accent-rgb) / .26);
+  --accent-edge:     rgb(var(--accent-rgb) / .70);
+  --accent-ring:     rgb(var(--accent-rgb) / .22);
+
+  --grad-a: linear-gradient(135deg, #4338ca, #6d28d9 45%, #0e7490);
+  /* Stays bright on purpose: --grad-b carries --on-ok, which is near-black, so darkening
+     this the way --grad-a was darkened moves it the wrong way. #059669 gave 4.42:1. */
+  --grad-b: linear-gradient(135deg, #0891b2, #10b981);
+  --grad-danger: linear-gradient(135deg, #be123c, #c2410c);
+
+  --page-bloom-a: rgba(99, 102, 241, .10);
+  --page-bloom-b: rgba(6, 182, 212, .07);
+  --page-bloom-c: rgba(167, 139, 250, .06);
+  --hero-wash: linear-gradient(120deg, rgba(99,102,241,.14), rgba(139,92,246,.09) 45%, rgba(6,182,212,.09));
+  --login-wash: linear-gradient(150deg, rgba(99,102,241,.12), rgba(6,182,212,.08));
+  --bloom: rgba(255, 255, 255, .55);
+
+  --scrim: rgba(15, 23, 42, .42);
+  --code-bg: rgba(15, 23, 42, .05);
+  --select-bg: #ffffff;
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%230f172a' stroke-opacity='.6' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  --shadow: 0 1px 2px rgba(15,23,42,.06), 0 8px 30px rgba(15,23,42,.10);
+  --shadow-lg: 0 2px 4px rgba(15,23,42,.08), 0 24px 60px rgba(15,23,42,.16);
+
+  color-scheme: light;
+}
+
+/* ===== LIGHT PALETTE — BLOCK 2 of 2 ==========================================
+   Byte-identical to BLOCK 1 above, scoped to "the user has not chosen". The
+   :not([data-theme]) is what makes an explicit choice beat the OS in both directions —
+   without it, a user on a light laptop could not pin dark. */
 @media (prefers-color-scheme: light) {
-  :root {
-    --bg-0: #eef2f9; --bg-1: #f7f9fd;
-    --ink: #0f172a; --ink-2: rgba(15,23,42,.74); --ink-3: rgba(15,23,42,.5);
-    --line: rgba(15,23,42,.12); --line-2: rgba(15,23,42,.07);
-    --glass-1: rgba(255,255,255,.6); --glass-2: rgba(255,255,255,.78); --glass-3: rgba(255,255,255,.9);
-    --ok: #059669; --info: #2563eb; --warn: #b45309; --danger: #dc2626;
-    --critical: #be123c; --violet: #7c3aed;
+  :root:not([data-theme]) {
+    --ok-rgb:        5 150 105;
+    --info-rgb:     37  99 235;
+    --warn-rgb:    180  83   9;
+    --danger-rgb:  220  38  38;
+    --critical-rgb:190  18  60;
+    --violet-rgb:  124  58 237;
+    --accent-rgb:   79  70 229;
+    --cyan-rgb:      8 145 178;
+    --pink-rgb:    219  39 119;
+    --lime-rgb:     77 124  15;
+
+    --dim-a: .12;
+    --pill-line-a: .38;
+
+    --bg-0: #eef2f9;
+    --bg-1: #f7f9fd;
+    --ink: #0f172a;
+    --ink-2: rgba(15, 23, 42, .74);
+    --ink-3: rgba(15, 23, 42, .50);
+    --line: rgba(15, 23, 42, .12);
+    --line-2: rgba(15, 23, 42, .07);
+    --hover-line: rgb(var(--accent-rgb) / .35);
+    --btn-line: rgba(15, 23, 42, .48);   /* 3.2:1 against the card — see the dark block */
+
+    --glass-1: rgba(255, 255, 255, .60);
+    --glass-2: rgba(255, 255, 255, .78);
+    --glass-3: rgba(255, 255, 255, .90);
+
+    --accent-glow-sm:  0 6px 18px  rgb(var(--accent-rgb) / .22);
+    --accent-glow:     0 8px 22px  rgb(var(--accent-rgb) / .20);
+    --accent-glow-lg:  0 12px 34px rgb(var(--accent-rgb) / .26);
+    --accent-edge:     rgb(var(--accent-rgb) / .70);
+    --accent-ring:     rgb(var(--accent-rgb) / .22);
+
+    --grad-a: linear-gradient(135deg, #4338ca, #6d28d9 45%, #0e7490);
+    /* Stays bright on purpose: --grad-b carries --on-ok, which is near-black, so darkening
+       this the way --grad-a was darkened moves it the wrong way. #059669 gave 4.42:1. */
+    --grad-b: linear-gradient(135deg, #0891b2, #10b981);
+    --grad-danger: linear-gradient(135deg, #be123c, #c2410c);
+
+    --page-bloom-a: rgba(99, 102, 241, .10);
+    --page-bloom-b: rgba(6, 182, 212, .07);
+    --page-bloom-c: rgba(167, 139, 250, .06);
+    --hero-wash: linear-gradient(120deg, rgba(99,102,241,.14), rgba(139,92,246,.09) 45%, rgba(6,182,212,.09));
+    --login-wash: linear-gradient(150deg, rgba(99,102,241,.12), rgba(6,182,212,.08));
+    --bloom: rgba(255, 255, 255, .55);
+
+    --scrim: rgba(15, 23, 42, .42);
+    --code-bg: rgba(15, 23, 42, .05);
+    --select-bg: #ffffff;
+    --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%230f172a' stroke-opacity='.6' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+    --shadow: 0 1px 2px rgba(15,23,42,.06), 0 8px 30px rgba(15,23,42,.10);
+    --shadow-lg: 0 2px 4px rgba(15,23,42,.08), 0 24px 60px rgba(15,23,42,.16);
+
     color-scheme: light;
   }
 }
@@ -73,9 +281,9 @@ body {
   font-family: var(--sans);
   color: var(--ink);
   background:
-    radial-gradient(1100px 700px at 12% -10%, rgba(99,102,241,.20), transparent 60%),
-    radial-gradient(900px 600px at 100% 0%, rgba(6,182,212,.14), transparent 55%),
-    radial-gradient(800px 800px at 60% 110%, rgba(167,139,250,.12), transparent 60%),
+    radial-gradient(1100px 700px at 12% -10%, var(--page-bloom-a), transparent 60%),
+    radial-gradient(900px 600px at 100% 0%, var(--page-bloom-b), transparent 55%),
+    radial-gradient(800px 800px at 60% 110%, var(--page-bloom-c), transparent 60%),
     var(--bg-0);
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
@@ -129,7 +337,7 @@ h3 { font-size: 1.02rem; } h4 { font-size: .9rem; }
 .card-click:hover, .card-click:focus-visible {
   transform: translateY(-2px);
   background: var(--glass-2);
-  border-color: rgba(255,255,255,.2);
+  border-color: var(--hover-line);
   outline: none;
 }
 .card-click::after {
@@ -161,7 +369,7 @@ h3 { font-size: 1.02rem; } h4 { font-size: .9rem; }
 .brand { display: flex; align-items: center; gap: var(--s-2); font-weight: 900; font-size: 1.05rem; }
 .brand-mark {
   width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center;
-  background: var(--grad-a); box-shadow: 0 6px 18px rgba(99,102,241,.4); font-size: 1rem;
+  background: var(--grad-a); box-shadow: var(--accent-glow-sm); font-size: 1rem;
 }
 
 .nav { display: flex; flex-direction: column; gap: 2px; }
@@ -197,9 +405,7 @@ h3 { font-size: 1.02rem; } h4 { font-size: .9rem; }
   padding: var(--s-5) var(--s-5);
   border-radius: var(--r-lg);
   border: 1px solid var(--line);
-  background:
-    linear-gradient(120deg, rgba(99,102,241,.24), rgba(139,92,246,.14) 45%, rgba(6,182,212,.14)),
-    var(--glass-1);
+  background: var(--hero-wash), var(--glass-1);
   backdrop-filter: blur(var(--blur));
   -webkit-backdrop-filter: blur(var(--blur));
   margin-bottom: var(--s-3);
@@ -207,7 +413,7 @@ h3 { font-size: 1.02rem; } h4 { font-size: .9rem; }
 .hero::after {
   content: ""; position: absolute; inset: -40% -10% auto auto;
   width: 460px; height: 460px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(255,255,255,.10), transparent 62%);
+  background: radial-gradient(circle, var(--bloom), transparent 62%);
   pointer-events: none;
 }
 .hero h1 { font-size: clamp(1.4rem, 2.6vw, 2rem); }
@@ -236,18 +442,18 @@ h3 { font-size: 1.02rem; } h4 { font-size: .9rem; }
   font-size: .69rem; font-weight: 800; letter-spacing: .02em;
   border: 1px solid transparent; white-space: nowrap;
 }
-.pill-ok       { background: var(--ok-dim);     color: var(--ok);       border-color: rgba(52,211,153,.3); }
-.pill-info     { background: var(--info-dim);   color: var(--info);     border-color: rgba(96,165,250,.3); }
-.pill-warn     { background: var(--warn-dim);   color: var(--warn);     border-color: rgba(251,191,36,.3); }
-.pill-danger   { background: var(--danger-dim); color: var(--danger);   border-color: rgba(248,113,113,.32); }
-.pill-critical { background: var(--danger-dim); color: var(--critical); border-color: rgba(251,113,133,.4); }
-.pill-violet   { background: var(--violet-dim); color: var(--violet);   border-color: rgba(167,139,250,.3); }
+.pill-ok       { background: var(--ok-dim);       color: var(--ok);       border-color: var(--ok-line); }
+.pill-info     { background: var(--info-dim);     color: var(--info);     border-color: var(--info-line); }
+.pill-warn     { background: var(--warn-dim);     color: var(--warn);     border-color: var(--warn-line); }
+.pill-danger   { background: var(--danger-dim);   color: var(--danger);   border-color: var(--danger-line); }
+.pill-critical { background: var(--critical-dim); color: var(--critical); border-color: var(--critical-line); }
+.pill-violet   { background: var(--violet-dim);   color: var(--violet);   border-color: var(--violet-line); }
 
 /* --------------------------------------------------------------- buttons -- */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: .45rem;
   padding: .58rem .95rem; border-radius: var(--r-sm);
-  border: 1px solid var(--line); background: var(--glass-2); color: var(--ink);
+  border: 1px solid var(--btn-line); background: var(--glass-2); color: var(--ink);
   font-family: inherit; font-size: .86rem; font-weight: 700; cursor: pointer;
   transition: transform .12s, background .14s, border-color .14s;
   text-decoration: none;
@@ -255,10 +461,10 @@ h3 { font-size: 1.02rem; } h4 { font-size: .9rem; }
 .btn:hover { background: var(--glass-3); transform: translateY(-1px); text-decoration: none; }
 .btn:active { transform: translateY(0); }
 .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
-.btn-primary { background: var(--grad-a); border-color: transparent; color: #fff; box-shadow: 0 8px 22px rgba(99,102,241,.35); }
+.btn-primary { background: var(--grad-a); border-color: transparent; color: var(--on-accent); box-shadow: var(--accent-glow); }
 .btn-primary:hover { background: var(--grad-a); filter: brightness(1.08); }
-.btn-danger { background: var(--grad-danger); border-color: transparent; color: #fff; }
-.btn-ok { background: var(--grad-b); border-color: transparent; color: #04231a; }
+.btn-danger { background: var(--grad-danger); border-color: transparent; color: var(--on-accent); }
+.btn-ok { background: var(--grad-b); border-color: transparent; color: var(--on-ok); }
 .btn-ghost { background: transparent; }
 .btn-sm { padding: .35rem .65rem; font-size: .76rem; }
 .btn-block { width: 100%; }
@@ -266,15 +472,55 @@ h3 { font-size: 1.02rem; } h4 { font-size: .9rem; }
 
 /* ---------------------------------------------------------------- inputs -- */
 input[type=text], input[type=password], input[type=number], input[type=date],
-input[type=email], select, textarea {
+input[type=email], input[type=search], input[type=tel], input[type=url],
+input[type=time], input[type=datetime-local], input:not([type]),
+select, textarea {
   width: 100%; padding: .55rem .7rem; border-radius: var(--r-sm);
   border: 1px solid var(--line); background: var(--glass-1); color: var(--ink);
   font-family: inherit; font-size: .87rem;
 }
-input:focus, select:focus, textarea:focus {
-  outline: none; border-color: rgba(99,102,241,.6); background: var(--glass-2);
-  box-shadow: 0 0 0 3px rgba(99,102,241,.18);
+
+/* The dropdown that read as white-on-white.
+   The UA draws the popup listbox from the select's own computed background-color. The
+   shared rule above hands it var(--glass-1) -- rgba(255,255,255,.045) -- which does not
+   composite over the page, it composites over the UA's popup backdrop, landing on
+   effectively white. The options then inherit color:var(--ink), near-white. Setting
+   color-scheme on :root would normally have given a dark native popup, but an explicit
+   background/color pair on the control opts out of native rendering entirely.
+   So --select-bg MUST stay opaque. Losing the frosting on this one control is the price
+   of a readable menu; do not "restore" it to var(--glass-1).
+   Safari on macOS draws a native NSMenu and ignores option colours outright -- there,
+   color-scheme is the whole fix, which is why it is declared per theme. */
+select {
+  appearance: none; -webkit-appearance: none;
+  background-color: var(--select-bg);
+  background-image: var(--select-arrow);
+  background-repeat: no-repeat;
+  background-position: right .6rem center;
+  background-size: 10px 6px;
+  padding-right: 1.9rem;
 }
+select option, select optgroup { background-color: var(--bg-1); color: var(--ink); }
+select option:checked, select option:hover { background-color: var(--glass-3); color: var(--ink); }
+
+input[type=checkbox], input[type=radio] { accent-color: var(--accent); }
+input[type=date]::-webkit-calendar-picker-indicator { cursor: pointer; }
+
+::placeholder { color: var(--ink-3); opacity: 1; }   /* Firefox defaults opacity to .54 */
+::selection { background: var(--accent-ring); color: var(--ink); }
+
+/* :focus-visible, not :focus -- the old rule fired the ring on mouse clicks too.
+   :where() keeps specificity at zero so nothing that already styles these is outranked. */
+:where(input, select, textarea):focus-visible {
+  outline: none; border-color: var(--accent-edge); background: var(--glass-2);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+/* Everything clickable had no focus style at all and fell back to the UA ring, which is
+   OS-coloured and ignores the theme. */
+:where(a, .btn, .nav a, .x, .eye, .chat-fab, [data-drill], [data-eye], [data-theme-toggle]):focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
 label.field { display: block; margin-bottom: var(--s-2); }
 label.field > span { display: block; margin-bottom: .25rem; }
 
@@ -284,7 +530,7 @@ label.field > span { display: block; margin-bottom: .25rem; }
 .switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
   border-radius: 50%; background: var(--ink-2); transition: transform .16s, background .16s; }
 .switch input:checked { background: var(--grad-b); border-color: transparent; }
-.switch input:checked::after { transform: translateX(18px); background: #fff; }
+.switch input:checked::after { transform: translateX(18px); background: var(--on-accent); }
 
 /* ---------------------------------------------------------------- tables -- */
 .tbl { width: 100%; border-collapse: collapse; font-size: .83rem; }
@@ -320,7 +566,7 @@ label.field > span { display: block; margin-bottom: .25rem; }
 
 pre.code {
   margin: 0; padding: var(--s-3); border-radius: var(--r-sm);
-  background: rgba(0,0,0,.32); border: 1px solid var(--line);
+  background: var(--code-bg); border: 1px solid var(--line);
   font-family: var(--mono); font-size: .76rem; line-height: 1.55;
   overflow-x: auto; color: var(--ink-2); white-space: pre-wrap; word-break: break-word;
 }
@@ -329,7 +575,7 @@ pre.code {
 .modal-host {
   position: fixed; inset: 0; z-index: 90; display: none;
   align-items: center; justify-content: center; padding: var(--s-4);
-  background: rgba(3, 6, 14, .68); backdrop-filter: blur(6px);
+  background: var(--scrim); backdrop-filter: blur(6px);
 }
 .modal-host.open { display: flex; }
 .modal {
@@ -377,8 +623,8 @@ pre.code {
 .chat-fab {
   position: fixed; right: var(--s-4); bottom: var(--s-4); z-index: 80;
   width: 58px; height: 58px; border-radius: 50%; border: 0; cursor: pointer;
-  background: var(--grad-a); color: #fff; font-size: 1.4rem;
-  box-shadow: 0 12px 34px rgba(99,102,241,.5);
+  background: var(--grad-a); color: var(--on-accent); font-size: 1.4rem;
+  box-shadow: var(--accent-glow-lg);
   transition: transform .16s;
 }
 .chat-fab:hover { transform: scale(1.07); }
@@ -393,13 +639,13 @@ pre.code {
 .chat-panel.open { display: flex; animation: pop .2s ease-out; }
 .chat-head { padding: var(--s-3); border-bottom: 1px solid var(--line);
   display: flex; justify-content: space-between; align-items: center; gap: var(--s-2);
-  background: linear-gradient(135deg, rgba(99,102,241,.16), transparent); }
+  background: linear-gradient(135deg, rgb(var(--accent-rgb) / .16), transparent); }
 .chat-log { flex: 1; overflow-y: auto; padding: var(--s-3); display: flex; flex-direction: column; gap: var(--s-2); }
 .chat-foot { padding: var(--s-3); border-top: 1px solid var(--line); display: flex; gap: var(--s-2); }
 .chat-quick { display: flex; gap: .35rem; padding: 0 var(--s-3) var(--s-3); flex-wrap: wrap; }
 
 .msg { max-width: 88%; padding: .6rem .8rem; border-radius: 14px; font-size: .85rem; line-height: 1.5; }
-.msg.user { align-self: flex-end; background: var(--grad-a); color: #fff; border-bottom-right-radius: 4px; }
+.msg.user { align-self: flex-end; background: var(--grad-a); color: var(--on-accent); border-bottom-right-radius: 4px; }
 .msg.bot { align-self: flex-start; background: var(--glass-2); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
 .msg table { width: 100%; border-collapse: collapse; font-size: .74rem; margin-top: .4rem; }
 .msg th, .msg td { padding: .25rem .35rem; border-bottom: 1px solid var(--line-2); text-align: left; }
@@ -432,7 +678,7 @@ pre.code {
 /* ------------------------------------------------------------ login page -- */
 .login-wrap { min-height: 100vh; display: grid; place-items: center; padding: var(--s-4); }
 .login-card { width: min(940px, 100%); display: grid; grid-template-columns: 1.1fr 1fr; overflow: hidden; }
-.login-side { padding: var(--s-5); background: linear-gradient(150deg, rgba(99,102,241,.2), rgba(6,182,212,.12)); }
+.login-side { padding: var(--s-5); background: var(--login-wash); }
 .login-form { padding: var(--s-5); }
 @media (max-width: 820px) { .login-card { grid-template-columns: 1fr; } .login-side { display: none; } }
 
@@ -440,11 +686,25 @@ pre.code {
 .scroll-y { overflow-y: auto; }
 .divider { height: 1px; background: var(--line); margin: var(--s-3) 0; border: 0; }
 
+/* Six regions scroll (.sidebar, .modal, .chat-log, .tbl-wrap, pre.code, .scroll-y) and
+   every one of them was showing an unthemed UA scrollbar. */
+* { scrollbar-width: thin; scrollbar-color: var(--glass-3) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--glass-3); border-radius: var(--r-full);
+  border: 2px solid transparent; background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--hover-line); background-clip: content-box; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
 
 @media print {
   .sidebar, .chat-fab, .chat-panel, .toast-host, .btn { display: none !important; }
+  /* The one place a literal is correct: paper is white regardless of the screen theme.
+     Note charts still print in their theme colours -- their paint comes from tokens that
+     this rule does not reach. Pre-existing; a print-specific palette would be the fix. */
   body { background: #fff; color: #000; }
 }
