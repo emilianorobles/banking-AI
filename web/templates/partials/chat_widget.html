@@ -113,6 +113,23 @@
     log.appendChild(d);
   }
 
+  /* Tool-result charts. The server sends DATA under a whitelisted chart name (see VISUALS
+     in web/routes/agent.py) and SB.paintCharts draws it -- the same function the drill-down
+     modal uses, so there is one implementation and two callers. */
+  function charts(specs) {
+    if (!specs || !specs.length) return;
+    const d = document.createElement("div");
+    d.className = "msg bot";
+    d.innerHTML = specs.map((s, i) =>
+      (s.title ? `<div class="label">${SB.escapeHtml(s.title)}</div>` : "") +
+      `<div class="chart-slot" data-chart-slot="${i}"></div>` +
+      (s.caption ? `<div class="tiny dim" style="margin-top:.3rem">${SB.escapeHtml(s.caption)}</div>` : "")
+    ).join("");
+    log.appendChild(d);
+    SB.paintCharts(specs, d);          /* after append: SBCharts needs a live node */
+    log.scrollTop = log.scrollHeight;
+  }
+
   async function turn(text, approve) {
     if (busy) return;
     busy = true; send.disabled = true;
@@ -127,6 +144,7 @@
       t.remove();
 
       if (data.text) bubble("bot", data.html || SB.escapeHtml(data.text).replace(/\n/g, "<br>"));
+      charts(data.charts);
 
       (data.tool_calls || []).forEach(c => {
         if (c.requires_approval && c.approved === null) approvalCard(c);

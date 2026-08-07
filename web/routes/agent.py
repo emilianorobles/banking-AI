@@ -13,8 +13,7 @@ human checkpoint real rather than cosmetic.
 
 from __future__ import annotations
 
-import html as html_lib
-import re
+from typing import Any, Callable
 
 from flask import Blueprint, jsonify, request, session
 
@@ -22,7 +21,7 @@ from core import db
 from core.agents import customer_agent
 from core.contracts import ToolCall
 
-from .. import auth
+from .. import auth, mdlite
 
 bp = Blueprint("agent", __name__, url_prefix="/api/agent")
 
@@ -35,20 +34,6 @@ REFRESH_AFTER = {"freeze_card", "unfreeze_card", "set_travel_notice", "raise_dis
                  "report_card_lost", "set_spending_alert"}
 
 
-def _render(text: str) -> str:
-    """Escape first, then re-introduce the few marks the agent actually uses.
-
-    Escaping before formatting rather than after is the whole point -- the agent's output
-    includes merchant names and free text that came from outside, and this is the last
-    place it can turn into markup.
-    """
-    out = html_lib.escape(text or "")
-    out = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", out)
-    out = re.sub(r"`(.+?)`", r'<code class="mono">\1</code>', out)
-    out = re.sub(r"^[-*]\s+(.+)$", r"• \1", out, flags=re.MULTILINE)
-    return out.replace("\n", "<br>")
-
-
 def _call_to_dict(c: ToolCall) -> dict:
     return {
         "tool_name": c.tool_name,
@@ -57,6 +42,142 @@ def _call_to_dict(c: ToolCall) -> dict:
         "approved": c.approved,
         "error": c.error,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Tool result visuals
+# --------------------------------------------------------------------------- #
+#
+# HAND-WRITTEN, ONE ENTRY PER TOOL, ON PURPOSE. The tempting version derives a chart
+# generically from `ToolCall.result` -- and that is a DLP hole, not a shortcut.
+# `get_statement` returns the entire statement body; `get_account_summary` returns
+# balances and `card_last4`. `_call_to_dict` drops `result` for exactly that reason, and
+# a generic serialiser would put it all back on the wire while contradicting the premise
+# that raw account detail never leaves the server unasked.
+#
+# So: a tool with no entry here produces no visual, and every entry names the specific
+# fields it is allowed to read.
+
+def _v_travel_budget(r: dict) -> list[dict]:
+    rows = [c for c in (r.get("by_category") or []) if (c.get("amount") or 0) > 0]
+    if not rows:
+        return []
+    ccy = r.get("currency") or ""
+    total = r.get("recommended_total")
+    return [{
+        "type": "donut",
+        "title": f"Where the money goes — {r.get('destination', 'your trip')}",
+        "data": [{"label": c["category"], "value": round(float(c["amount"]), 2)}
+                 for c in rows],
+        "opts": {},
+        "caption": (f"Recommended total {_money(total, ccy)} for {r.get('days')} days, "
+                    f"including a 15% contingency." if total is not None else ""),
+    }]
+
+
+def _v_security_status(r: dict) -> list[dict]:
+    out: list[dict] = []
+    score = r.get("security_score")
+    if isinstance(score, (int, float)):
+        out.append({"type": "ring", "title": "Security score", "data": score,
+                    "opts": {}, "caption": f"Grade {r.get('security_grade', '')}".strip()})
+
+    comps = r.get("health_components") or []
+    rows = []
+    for c in comps:
+        earned, out_of = c.get("earned"), c.get("out_of", c.get("max"))
+        if not isinstance(earned, (int, float)) or not isinstance(out_of, (int, float)):
+            continue
+        rows.append({
+            "label": str(c.get("component") or c.get("label") or ""),
+            "total": out_of,
+            # `earned` plus a dimmed remainder is exactly the shape stackedBars takes,
+            # and it reads as "how much of this is filled in" without a second axis.
+            "parts": [{"label": "earned", "value": earned},
+                      {"label": "remaining", "value": max(0, out_of - earned), "dim": True}],
+        })
+    if rows:
+        out.append({"type": "stackedBars", "title": "Account health, by component",
+                    "data": rows, "opts": {"height": 40 + 34 * len(rows)},
+                    "height": 40 + 34 * len(rows)})
+    return out
+
+
+def _v_account_summary(r: dict) -> list[dict]:
+    """Credit utilisation only.
+
+    A bar chart of three unrelated scalars (balance, limit, available) is decoration --
+    the eye learns nothing from it that the numbers in the sentence above did not already
+    say. Utilisation is one figure that means something on a dial.
+    """
+    limit, available = r.get("credit_limit"), r.get("available_credit")
+    if not isinstance(limit, (int, float)) or not isinstance(available, (int, float)) or limit <= 0:
+        return []
+    used_pct = max(0.0, min(100.0, (limit - available) / limit * 100))
+    ccy = r.get("currency") or ""
+    return [{
+        "type": "gauge", "title": "Credit used", "data": round(used_pct),
+        "opts": {"max": 100, "sub": "of your limit"},
+        "caption": f"{_money(limit - available, ccy)} of {_money(limit, ccy)} in use.",
+    }]
+
+
+def _v_recent_transactions(r: list) -> list[dict]:
+    """Spend by kind of business.
+
+    NOT by merchant: `list_recent_transactions` deliberately does not return merchant
+    names -- they are attacker-controlled text and no tool puts them in front of the
+    model. `merchant_category` is a controlled vocabulary and answers the same question.
+    """
+    if not isinstance(r, list) or not r:
+        return []
+    totals: dict[str, float] = {}
+    ccy = ""
+    for row in r:
+        value = row.get("amount_value")
+        if not isinstance(value, (int, float)):
+            continue
+        ccy = ccy or (row.get("currency") or "")
+        key = str(row.get("merchant_category") or "other").replace("_", " ")
+        totals[key] = totals.get(key, 0.0) + float(value)
+    if not totals:
+        return []
+    top = sorted(totals.items(), key=lambda kv: kv[1], reverse=True)[:8]
+    return [{
+        "type": "bars", "title": "Spend by kind of business",
+        "data": [{"label": k, "value": round(v, 2)} for k, v in top],
+        "opts": {"height": 200}, "height": 200,
+        "caption": f"Across the {len(r)} most recent payments"
+                   + (f", in {ccy}." if ccy else "."),
+    }]
+
+
+def _money(value, currency: str) -> str:
+    from core import money
+    return money.fmt(value, currency, dp=0)
+
+
+VISUALS: dict[str, Callable[[Any], list[dict]]] = {
+    "plan_travel_budget": _v_travel_budget,
+    "get_security_status": _v_security_status,
+    "get_account_summary": _v_account_summary,
+    "list_recent_transactions": _v_recent_transactions,
+    # search_fraud_precedents: the table the model writes is the useful part; a bar chart
+    # of similarity scores is noise dressed as rigour.
+    # get_statement: no visual -- a download link is what that tool is for.
+}
+
+
+def visuals_for(call: ToolCall) -> list[dict]:
+    """Chart specs for one tool result, or [] for any tool without an entry."""
+    builder = VISUALS.get(call.tool_name)
+    if builder is None or call.error or call.result is None:
+        return []
+    try:
+        return builder(call.result) or []
+    except Exception:
+        # A malformed result must cost a chart, never the reply that goes with it.
+        return []
 
 
 @bp.post("/chat")
@@ -108,11 +229,22 @@ def chat():
     session[HISTORY_KEY] = history
     session.modified = True
 
+    # Only tools that actually ran contribute a visual: a proposal awaiting confirmation
+    # has no result yet, and a rejected one never will.
+    charts: list[dict] = []
+    for c in reply.tool_calls:
+        if c.requires_approval and c.approved is None:
+            continue
+        charts.extend(visuals_for(c))
+
     return jsonify({
         "text": reply.text,
-        "html": _render(reply.text),
+        # `text` is kept alongside `html` because the two have different consumers: the
+        # bubble renders the HTML, and voice reads the text (a spoken table is unbearable).
+        "html": mdlite.render(reply.text),
         "intent": reply.intent,
         "tool_calls": [_call_to_dict(c) for c in reply.tool_calls],
+        "charts": charts,
         "citations": reply.citations,
         "guardrail_notes": reply.guardrail_notes,
         "latency_ms": reply.latency_ms,
