@@ -1,0 +1,24 @@
+{# Theme bootstrap. MUST be included in <head> BEFORE the stylesheet link, in every page
+   that has its own <head>: base.html, login.html and error.html. error.html is the easy
+   one to forget and the worst one to get wrong -- it is what a judge sees when something
+   has already gone wrong.
+
+   Only sets the attribute when the user has made an explicit choice. A missing key leaves
+   <html> bare so :root:not([data-theme]) plus the prefers-color-scheme query in glass.css
+   supply the OS preference -- same "absent means the safe default" contract as
+   sb.maskBalance in app.js.
+
+   The try/catch is load-bearing, not decorative: localStorage THROWS in Safari private
+   browsing, and an uncaught throw in a head script aborts parsing before the stylesheet
+   link is reached, leaving an unstyled page. #}
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem("sb.theme");
+      if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+    } catch (e) { /* storage disabled -- fall through to the OS preference */ }
+  })();
+</script>
+{# Without JS the toggle cannot persist anything, so hide it rather than present a dead
+   control. The OS preference still applies, because that part is pure CSS. #}
+<noscript><style>[data-theme-toggle]{display:none}</style></noscript>
