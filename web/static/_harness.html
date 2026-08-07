@@ -228,12 +228,68 @@ citations = [CASE-0117, CASE-0042]</pre>
     <div class="stack">
       <div class="msg user">Freeze my card, it's been stolen.</div>
       <div class="msg bot">Card ending <span class="mono">4821</span> is frozen. A replacement ships today.</div>
+      <!-- A markdown table as web/mdlite.py emits it: .tbl inside .msg, with .num keeping
+           the money column right-aligned despite .msg td's text-align:left. -->
+      <div class="msg bot">Your recent activity:
+        <div class="tbl-wrap"><table class="tbl">
+          <thead><tr><th>When</th><th>Merchant</th><th class="num">Amount</th></tr></thead>
+          <tbody>
+            <tr><td>06 Aug 10:12</td><td>DailyBasket</td><td class="num">₹145.17 INR</td></tr>
+            <tr><td>05 Aug 19:40</td><td>CityGas</td><td class="num">₹1,240.00 INR</td></tr>
+          </tbody>
+        </table></div>
+      </div>
       <div class="msg-notes"><span>🛡️ 2 PII fields tokenised · 0 guardrails tripped</span></div>
       <div class="typing"><span></span><span></span><span></span></div>
+    </div>
+    <!-- Voice controls. Listening pill animates var(--danger); both buttons are plain
+         .btn.btn-sm.btn-ghost so they inherit the theme with no colour of their own. -->
+    <div class="chat-foot" style="margin:var(--s-3) calc(-1 * var(--s-4)) 0">
+      <input type="text" id="chat-input" placeholder="Ask, or tell me what to do…">
+      <button class="btn btn-sm btn-ghost">🎤</button>
+      <button class="btn btn-sm btn-ghost" disabled title="No speech recognition">🎤</button>
+      <button class="btn btn-primary">Send</button>
+    </div>
+    <div class="row" style="margin-top:.5rem">
+      <span class="tiny dim">Voice mode</span>
+      <button class="btn btn-sm btn-ghost">🔊</button>
+      <button class="btn btn-sm btn-ghost">🔇</button>
+      <span class="pill pill-danger" id="chat-listening">listening</span>
+      <span class="tiny dim">Speech recognition needs an internet connection. Typing still works.</span>
     </div>
     <!-- position:static so it sits in the flow instead of floating over the page. It is here
          because it is one of only five elements that consume --grad-a. -->
     <button class="chat-fab" style="position:static;display:inline-grid;place-items:center">💬</button>
+  </div>
+
+  <div class="label h-sec">Explanation popup <span class="dim">— the section kinds renderDrill emits</span></div>
+  <div class="glass card">
+    <div class="row" style="gap:.5rem;margin-bottom:.35rem">
+      <span class="pill pill-warn">We asked you to confirm it</span>
+    </div>
+    <p style="margin:.2rem 0 1rem">A few things about this payment were unusual — not enough
+      to stop it, but enough that we wanted to hear from you.</p>
+    <!-- Three-state checklist. Neutral dot for "did not apply": no green ticks, because a
+         check that was evaluated and found not to apply was not "verified". -->
+    <div class="checkrow">
+      <span class="ic" style="color:var(--danger)">●</span>
+      <div><div class="small"><strong>Much larger than you usually spend</strong></div>
+        <div class="tiny dim">Three times bigger than your usual maximum. (+22 points)</div></div>
+    </div>
+    <div class="checkrow">
+      <span class="ic" style="color:var(--info)">◐</span>
+      <div><div class="small"><strong>Outside your home country</strong></div>
+        <div class="tiny dim">Suppressed — you told us you were travelling.</div></div>
+    </div>
+    <div class="checkrow">
+      <span class="ic dim">○</span>
+      <div><div class="small"><strong>Pace</strong></div>
+        <div class="tiny dim">A sudden burst of payments, At an hour you do not normally spend</div></div>
+    </div>
+    <div class="row" style="margin-top:.6rem">
+      <button class="pill pill-warn" style="cursor:pointer;border:0;font-family:inherit">AMOUNT_ANOMALY</button>
+      <span class="pill pill-violet">CASE-0078</span>
+    </div>
   </div>
 
   <div class="label h-sec">Toasts</div>

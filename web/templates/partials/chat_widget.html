@@ -9,7 +9,13 @@
       <div style="font-weight:800">SentinelBank Assistant</div>
       <div class="tiny dim" id="chat-status">Can act on your account · every action is logged</div>
     </div>
-    <button class="x" id="chat-close" type="button" aria-label="Close">&times;</button>
+    <div class="row nowrap">
+      {# Wired by static/js/voice.js, which disables them itself when the browser has no
+         speech support. Kept as plain markup so the widget works with voice.js absent. #}
+      <button class="btn btn-sm btn-ghost" id="chat-voice" type="button"
+              aria-pressed="false" aria-label="Voice mode" title="Voice mode">🔊</button>
+      <button class="x" id="chat-close" type="button" aria-label="Close">&times;</button>
+    </div>
   </header>
 
   <div class="chat-log" id="chat-log">
@@ -30,9 +36,13 @@
     <button class="btn btn-sm" data-q="Freeze my card, I think it's been stolen">Block card</button>
   </div>
 
+  <div class="tiny dim hidden" id="chat-voice-note" style="padding:0 var(--s-3) .4rem"></div>
+
   <form class="chat-foot" id="chat-form">
     <input type="text" id="chat-input" placeholder="Ask, or tell me what to do…"
            autocomplete="off" aria-label="Message">
+    <button class="btn btn-sm btn-ghost" id="chat-mic" type="button"
+            aria-pressed="false" aria-label="Dictate" title="Dictate">🎤</button>
     <button class="btn btn-primary" type="submit" id="chat-send">Send</button>
   </form>
 </section>
@@ -50,8 +60,18 @@
 
   let busy = false;
 
+  /* A three-line event seam so voice.js can follow the conversation without this file
+     having to know voice exists. Kept minimal deliberately: the beats in here are held
+     verbatim in core/record_demo.py, so churn in this file raises the re-record surface. */
+  const listeners = {};
+  function on(event, fn) { (listeners[event] = listeners[event] || []).push(fn); }
+  function emit(event, detail) {
+    (listeners[event] || []).forEach(fn => { try { fn(detail); } catch (e) { /* never break a turn */ } });
+  }
+
   function open()  { panel.classList.add("open"); fab.style.display = "none"; input.focus(); }
   function close() { panel.classList.remove("open"); fab.style.display = ""; }
+  function setInput(text) { input.value = text == null ? "" : String(text); }
   fab.addEventListener("click", open);
   document.getElementById("chat-close").addEventListener("click", close);
 
@@ -133,6 +153,7 @@
   async function turn(text, approve) {
     if (busy) return;
     busy = true; send.disabled = true;
+    emit("busy");
     const t = typing();
     status.textContent = "Thinking…";
 
@@ -155,6 +176,7 @@
       }
       notes(data.guardrail_notes);
 
+      emit("reply", data);
       if (data.refresh) setTimeout(() => location.reload(), 1400);
       status.textContent = data.latency_ms
         ? `Answered in ${(data.latency_ms / 1000).toFixed(1)}s · every action is logged`
@@ -165,6 +187,7 @@
       status.textContent = "Something went wrong";
     } finally {
       busy = false; send.disabled = false; input.focus();
+      emit("idle");
     }
   }
 
@@ -199,6 +222,6 @@
     if (node) { e.preventDefault(); ask(node.dataset.ask); }
   });
 
-  window.SBChat = { open, close, ask };
+  window.SBChat = { open, close, ask, setInput, on };
 })();
 </script>

@@ -136,6 +136,8 @@
 <script>window.SB_CURRENCY = {{ currency_symbols|tojson }};</script>
 <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<!-- After app.js (uses SB.*) and after the widget, which defines window.SBChat. -->
+<script src="{{ url_for('static', filename='js/voice.js') }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
